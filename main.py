@@ -56,10 +56,6 @@ if __name__ == '__main__':
     df_results_raw.to_excel(os.path.join(args.results_dir, 'raw_results_export.xlsx'))
     np.save(os.path.join(args.results_dir,'raw_results_ts.npy'), np.array(results_ts))
 
-    np.save(os.path.join(args.results_dir, 'raw_results_temp.npy', np.array(results)))
-
-    results = np.load(os.path.join(args.results_dir, 'raw_results_temp.npy'))
-    results_ts = np.load(os.path.join(args.results_dir, 'raw_results_ts.npy'))
 
     ## Save processed results
     df_results_processed = full_results_processing(args, np.array(results), np.array(results_ts), lowc_targets,
