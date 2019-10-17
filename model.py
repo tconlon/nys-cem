@@ -66,8 +66,7 @@ def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw,
     nuc_gen_mw = [int(nuclear_boolean) * args.nuc_gen_mw[i] for i in range(4)]
 
     ## Print statements to check model configuration is correct:
-    print('Demand')
-    print(np.sum(np.mean(baseline_demand[0:T], axis=0)))
+
     print('Low-Carbon Supply Target')
     print(lowc_target)
     print('Heating Capacity [MW]')
@@ -157,7 +156,8 @@ def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw,
         # Initialize battery level and EV charging variables
         batt_level   = m.addVars(trange, name = 'batt_level_region_{}'.format(i + 1))
         h2_level     = m.addVars(trange, name = 'h2_level_region_{}'.format(i + 1))
-        ev_charging  = m.addVars(trange, ub=ev_load_mw[i] * 6, name = 'ev_charging_region_{}'.format(i + 1))
+        ev_charging  = m.addVars(trange, ub=ev_load_mw[i] / args.ev_charging_p2e_ratio,
+                                 name = 'ev_charging_region_{}'.format(i + 1))
 
         # Initialize netload variables
         netload_diff = m.addVars(trange, lb=-GRB.INFINITY, name = "netload_diff_region_{}".format(i + 1))
@@ -165,8 +165,8 @@ def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw,
         netload      = m.addVars(trange, obj=args.netload_cost_mwh[i], name="netload_region_{}".format(i + 1))
 
         # Set up initial battery cap constraints
-        batt_level[0] = 0  # battery_cap_mwh/2
-        h2_level[0] = h2_cap_mwh / 2
+        batt_level[0] = 0.5 * battery_cap_mwh
+        h2_level[0]   = 0.5 * h2_cap_mwh
 
         # Initialize H2 constraints based on model run specifics
         if not h2_boolean:
@@ -298,7 +298,7 @@ def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw,
     for i in range(args.num_regions):
         model_data_offshore_cap[i] = m.getVarByName("offshore_cap_region_{}".format(i+1))
 
-    m.addConstr((model_data_offshore_cap[2] + model_data_offshore_cap[3]) <= 37572)
+    m.addConstr((model_data_offshore_cap[2] + model_data_offshore_cap[3]) <= args.offshore_wind_limit_mw)
 
     # Low-carbon electricity constraint
     full_netload_sum_mwh = quicksum(model_data_netload_region_1[j] + model_data_netload_region_2[j] +

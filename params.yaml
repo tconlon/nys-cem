@@ -4,7 +4,7 @@ data_dir: '../data_uploads'
 results_dir: '../model_results'
 
 # General model assumptions
-num_years: 2
+num_years: 1
 num_regions: 4
 i_rate: 0.05
 annualize_years_cap: 20
@@ -27,6 +27,7 @@ netload_cost_mwh: [22.83, 31.91, 28.59, 28.59]
 
 # Existing capacity assumptions
 onshore_wind_limit_mw: [32402, 4376, 0, 0]
+offshore_wind_limit_mw: 37572
 solar_limit_mw: [1e100, 1e100, 10400, 13600]
 hq_limit_mw: [1500, 0, 0, 0]
 gt_current_cap_mw: [3655.2, 6332, 8848, 3971]
