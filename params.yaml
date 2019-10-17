@@ -4,7 +4,7 @@ data_dir: '../data_uploads'
 results_dir: '../model_results'
 
 # General model assumptions
-num_years: 6
+num_years: 1
 num_regions: 4
 i_rate: 0.05
 annualize_years_cap: 20
