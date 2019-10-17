@@ -267,7 +267,7 @@ def full_results_processing(args, results, results_ts, lct, nuclear_boolean, h2_
     export_columns = get_processed_columns()
     T = args.num_years * 8760
     tx_tuple_list = get_tx_tuples(args)
-    cap_ann = args.num_years * annualization_rate(args.i_rate, args.annualize_years_cap)
+    cap_ann = annualization_rate(args.i_rate, args.annualize_years_cap)
 
     # Potential generation time-series for curtailment calcs
     baseline_demand_hourly_mw = np.load(os.path.join(args.data_dir, 'baseline_demand_hourly_mw.npy'))
