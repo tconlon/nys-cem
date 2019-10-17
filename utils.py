@@ -97,20 +97,14 @@ def load_gt_ramping_costs(args, results, results_ts):
     net_load_ramping_total_cost = np.zeros(results.shape[0])
     net_load_total_cost         = np.zeros(results.shape[0])
 
-
-
     for i in range(results.shape[0]):
         net_load = results_ts[i, :, 0:4]
-
-        print(np.mean(net_load, axis=0))
-        print(net_load.shape)
 
         for l in range(net_load.shape[0] - 1):
             for m in range(4):
                 net_load_ramping_total_cost[i] += abs(net_load[l + 1, m] - net_load[l, m]) * ramping_cost_mwh
                 net_load_total_cost[i]         += net_load[l, m] * args.netload_cost_mwh[m]
 
-    print(net_load_total_cost)
     return net_load_total_cost, net_load_ramping_total_cost
 
 
