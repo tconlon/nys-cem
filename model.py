@@ -156,7 +156,7 @@ def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw,
         # Initialize battery level and EV charging variables
         batt_level   = m.addVars(trange, name = 'batt_level_region_{}'.format(i + 1))
         h2_level     = m.addVars(trange, name = 'h2_level_region_{}'.format(i + 1))
-        ev_charging  = m.addVars(trange, ub=ev_load_mw[i] / args.ev_charging_p2e_ratio,
+        ev_charging  = m.addVars(trange, ub=ev_load_mw[i] / float(args.ev_charging_p2e_ratio),
                                  name = 'ev_charging_region_{}'.format(i + 1))
 
         # Initialize netload variables

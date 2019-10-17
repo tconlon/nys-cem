@@ -40,7 +40,7 @@ battery_p2e_ratio_range: [0.25, 8]
 h2_p2e_ratio_range: [0, 1e100]
 
 # EV assumptions
-ev_charging_p2e_ratio: 1/6
+ev_charging_p2e_ratio: 0.166666667
 ev_eff: 0.948
 ev_hours_start: 19
 ev_charging_hours: 24
