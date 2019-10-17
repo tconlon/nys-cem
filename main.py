@@ -3,18 +3,18 @@ from utils import *
 
 if __name__ == '__main__':
     args    = get_args()
-    export_columns = get_columns()
+    raw_export_columns = get_raw_columns()
 
     ## Establish model run parameters
-    lowc_targets = [0.7]
     nuclear_boolean = False
     h2_boolean = False
 
     # Define set of heating and EV loads for the model runs
-    heating_loads = [0, 2000, 4000, 6000]
-    ev_loads      = [0, 2000, 4000, 6000]
+    lowc_targets  = [0.6, 0.7]
+    heating_loads = [0, 0]
+    ev_loads      = [0, 0]
 
-    # Can be either len(lowc_target) or len(loads) depending on the tests you want to run
+    # Define number of tests to run, i.e. the length of the above lists
     num_test = len(lowc_targets)
 
     # Establish lists to store results
@@ -42,13 +42,21 @@ if __name__ == '__main__':
         allvars = m.getVars()
 
         # Process the model solution
-        single_scen_results, single_scen_results_ts =  results_processing(args, allvars, heating_cap_mw, ev_cap_mw)
+        tx_tuple_list = get_tx_tuples(args)
+        single_scen_results, single_scen_results_ts = raw_results_retrieval(args, m, tx_tuple_list, heating_cap_mw,
+                                                                            ev_cap_mw, lowc_target, nuclear_boolean,
+                                                                            h2_boolean)
 
-        ## Append single set of results to full results lists
+        # Append single set of results to full results lists
         results.append(single_scen_results)
         results_ts.append(single_scen_results_ts)
 
-    ## Save full set of results
-    df_results = pd.DataFrame(np.array(results), columns=export_columns)
-    df_results.to_excel(os.path.join(args.results_dir, 'full_results_export.xlsx'))
-    np.save(os.path.join(args.results_dir,'full_results_ts.npy'), np.array(results_ts))
+    ## Save raw results
+    df_results_raw = pd.DataFrame(np.array(results), columns=raw_export_columns)
+    df_results_raw.to_excel(os.path.join(args.results_dir, 'raw_results_export.xlsx'))
+    np.save(os.path.join(args.results_dir,'raw_results_ts.npy'), np.array(results_ts))
+
+    ## Save processed results
+    df_results_processed = full_results_processing(args, np.array(results), np.array(results_ts), lowc_targets,
+                                                   nuclear_boolean, h2_boolean)
+    df_results_processed.to_excel(os.path.join(args.results_dir, 'processed_results_export.xlsx'))

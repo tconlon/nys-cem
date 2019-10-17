@@ -1,7 +1,7 @@
 import numpy as np
 from gurobipy import *
 from utils import annualization_rate, load_timeseries
-
+import pandas as pd
 
 def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw, ev_cap_mw):
 
@@ -32,11 +32,31 @@ def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw,
     gt_cost_mw        = [args.num_years * annualization_rate(args.i_rate, args.annualize_years_cap) *
                          args.reserve_req * float(x) for x in args.gt_cost_mw]
 
-    # Need the 0.5 multiplier in here because of the way the transmission constraints are set up:
-    # There are variables for WE export and an EW import lines (and vice versa), need to ascribe
-    # half of the cost to each
-    trans_cost = [args.num_years * annualization_rate(args.i_rate, args.annualize_years_cap) * 0.5 * float(x)
-                  for x in np.array([0, args.trans_cost_mw, args.trans_cost_mw, args.trans_cost_mw, 0])]  # $/MW
+    # Load transmission cost and current capacity paramters
+    tx_matrix_limits = pd.read_excel(os.path.join(args.data_dir, 'transmission_matrix_limits.xlsx'),
+                                     header=0, index_col=0)
+    tx_matrix_costs = pd.read_excel(os.path.join(args.data_dir, 'transmission_matrix_costs.xlsx'),
+                                    header=0, index_col=0)
+
+    ## Define and populate transmission dictionaries
+    # Dictionary for transmission parameters
+    tx_dict = {}
+
+    # Dictionary to store the transmission time series
+    tx_ts_dict = {}
+
+    # Base string for tx dictionary keys
+    base_tx_cap_string = 'net_export_limits_{}_{}'
+
+    # Create our transmission cost and limits dictionary
+    for i in range(len(tx_matrix_limits)):
+        for j in range(len(tx_matrix_limits.columns)):
+            if tx_matrix_limits.iloc[i, j] > 0:
+                tx_dict[base_tx_cap_string.format(i + 1, j + 1)] = (tx_matrix_limits.iloc[i, j],
+                                                                    args.num_years *
+                                                                    annualization_rate(args.i_rate,
+                                                                                       args.annualize_years_cap) *
+                                                                    tx_matrix_costs.iloc[i, j])
 
     # Initialize gas variables
     gt_current_cap = [x / args.reserve_req for x in args.gt_current_cap_mw]
@@ -62,107 +82,139 @@ def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw,
 
     for i in range(0, args.num_regions):
 
-        # Initialize transmission capacity variables
-        exports_EW_cap = m.addVar(obj=trans_cost[i], lb=args.translimits_EW[i],
-                                  name="exports_EW_region" + str(i + 1) + "_cap")
-        imports_EW_cap = m.addVar(obj=trans_cost[i + 1], lb=args.translimits_EW[i + 1],
-                                  name="imports_EW_region" + str(i + 1) + "_cap")
-        exports_WE_cap = m.addVar(obj=trans_cost[i + 1], lb=args.translimits_WE[i + 1],
-                                  name="exports_WE_region" + str(i + 1) + "_cap")
-        imports_WE_cap = m.addVar(obj=trans_cost[i], lb=args.translimits_WE[i],
-                                  name="imports_WE_region" + str(i + 1) + "_cap")
+        # Find all interconnections for the current region
+        tx_lines_set = sorted([j for j in tx_dict.keys() if str(i + 1) in j])
+        # Find the complementary indices for the interconnections
+        tx_export_regions_set = np.unique([j.split('_')[-1] for j in tx_lines_set])
+        # Only take the indices larger than i
+        tx_export_regions_set = [j for j in tx_export_regions_set if int(j) > i + 1]
+
+        # Create new tx capacity variables, two for each interface, an 'export' and an 'import'
+        for export_region in tx_export_regions_set:
+            new_export_cap = m.addVar(obj=tx_dict[base_tx_cap_string.format(i + 1, export_region)][1],
+                                      name='new_export_limits_{}_{}'.format(i + 1, export_region))
+            new_import_cap = m.addVar(obj=tx_dict[base_tx_cap_string.format(export_region, i + 1)][1],
+                                      name='new_export_limits_{}_{}'.format(export_region, i + 1))
 
         m.update()
 
-        # Constrain transmission edge cases
-        if args.translimits_EW[i] == 0:
-            m.addConstr(exports_EW_cap == 0)
 
-        if args.translimits_EW[i + 1] == 0:
-            m.addConstr(imports_EW_cap == 0)
-
-        if args.translimits_WE[i + 1] == 0:
-            m.addConstr(exports_WE_cap == 0)
-
-        if args.translimits_WE[i] == 0:
-            m.addConstr(imports_WE_cap == 0)
 
         # Initialize capacity variables
-        onshore_cap     = m.addVar(ub=args.onshore_wind_limit_mw[i], obj=onshore_cap_cost)
-        offshore_cap    = m.addVar(obj=offshore_cap_cost, name="offshore_cap_region" + str(i + 1))
-        solar_cap       = m.addVar(ub=float(args.solar_limit_mw[i]), obj=solar_cap_cost)
-        gt_cap          = m.addVar(obj=gt_cost_mw[i], lb=gt_current_cap[i])
-        battery_cap_mwh = m.addVar(obj=battery_cost_mwh)
-        battery_cap_mw  = m.addVar(obj=battery_cost_mw)
-        h2_cap_mwh      = m.addVar(obj=h2_cost_mwh)
-        h2_cap_mw       = m.addVar(obj=h2_cost_mw)
+        onshore_cap     = m.addVar(ub=args.onshore_wind_limit_mw[i], obj=onshore_cap_cost,
+                                   name = 'onshore_cap_region_{}'.format(i + 1))
+        offshore_cap    = m.addVar(obj=offshore_cap_cost, name = 'offshore_cap_region_{}'.format(i + 1))
+        solar_cap       = m.addVar(ub=float(args.solar_limit_mw[i]), obj=solar_cap_cost,
+                                   name='solar_cap_region_{}'.format(i + 1))
+        gt_cap          = m.addVar(obj=gt_cost_mw[i], name='new_gt_cap_region_{}'.format(i + 1))
+        battery_cap_mwh = m.addVar(obj=battery_cost_mwh, name = 'batt_energy_cap_region_{}'.format(i + 1))
+        battery_cap_mw  = m.addVar(obj=battery_cost_mw, name = 'batt_power_cap_region_{}'.format(i + 1))
+        h2_cap_mwh      = m.addVar(obj=h2_cost_mwh, name = 'h2_energy_cap_region_{}'.format(i + 1))
+        h2_cap_mw       = m.addVar(obj=h2_cost_mw, name = 'h2_power_cap_region_{}'.format(i + 1))
 
         # Initialize time-series variables
-        offshore_windutil = m.addVars(trange)
-        onshore_windutil  = m.addVars(trange)
-        solar_util        = m.addVars(trange)
-        flex_hydro_mw     = m.addVars(trange, ub=args.flex_hydro_cap_mw[i])
-        batt_charge       = m.addVars(trange)
-        batt_discharge    = m.addVars(trange)
-        h2_charge         = m.addVars(trange)
-        h2_discharge      = m.addVars(trange)
+        offshore_windutil = m.addVars(trange, name= 'offshore_wind_util_region_{}'.format(i + 1))
+        onshore_windutil  = m.addVars(trange, name= 'onshore_wind_util_region_{}'.format(i + 1))
+        solar_util        = m.addVars(trange, name= 'solar_util_region_{}'.format(i + 1))
+        flex_hydro_mw     = m.addVars(trange, ub=args.flex_hydro_cap_mw[i],
+                                      name = 'flex_hydro_region_{}'.format(i + 1))
+        batt_charge       = m.addVars(trange, name= 'batt_charge_region_{}'.format(i + 1))
+        batt_discharge    = m.addVars(trange, name= 'batt_discharge_region_{}'.format(i + 1))
+        h2_charge         = m.addVars(trange, name= 'h2_charge_region_{}'.format(i + 1))
+        h2_discharge      = m.addVars(trange, name= 'h2_discharge_region_{}'.format(i + 1))
 
-        # Initialize transmission time-series variables
-        exports_EW = m.addVars(trange, name="exports_EW_region" + str(i + 1))
-        imports_EW = m.addVars(trange, name="imports_EW_region" + str(i + 1))
-        exports_WE = m.addVars(trange, name="exports_WE_region" + str(i + 1))
-        imports_WE = m.addVars(trange, name="imports_WE_region" + str(i + 1))
+
+        # Create transmission time series and total export/import capacity variables
+        for export_region in tx_export_regions_set:
+            # Time series variable, must set lowerbound to -Infinity since we are allowing 'negative' flow
+            tx_export_vars = m.addVars(trange, name= 'net_exports_ts_{}_to_{}'.format(i+1, export_region),
+                                       lb = -GRB.INFINITY)
+
+            # Export cap is = new cap + existing cap (from dictionary)
+            tx_export_cap  = m.getVarByName("new_export_limits_{}_{}".format(i + 1, export_region)) + \
+                                tx_dict[base_tx_cap_string.format(i + 1, export_region)][0]
+            # Import cap is = new cap + existing cap (from dictionary)
+            tx_import_cap  = m.getVarByName("new_export_limits_{}_{}".format(export_region, i + 1))  + \
+                                tx_dict[base_tx_cap_string.format(export_region, i + 1)][0]
+
+            m.update()
+
+            # Constrain individual Tx flow variables to the export import capacity
+            for j in trange:
+                m.addConstr(tx_export_vars[j] + tx_import_cap >= 0)
+                m.addConstr(tx_export_vars[j] - tx_export_cap <= 0)
+
+            # Store these tx flow variables in the time series dictionary for energy balance equation
+            tx_ts_dict['net_exports_ts_{}_to_{}'.format(i+1, export_region)] = tx_export_vars
+
+        m.update()
+
 
         # Initialize hq_imports
         hq_imports = m.addVars(trange, ub=args.hq_limit_mw[i], obj=args.hq_cost_mwh[i],
-                               name="hq_import_region" + str(i + 1))
+                               name="hq_import_region_{}".format(i + 1))
 
         # Initialize battery level and EV charging variables
-        batt_level   = m.addVars(trange)
-        h2_level     = m.addVars(trange)
-        ev_charging  = m.addVars(trange, ub=ev_load_mw[i] * 6)
+        batt_level   = m.addVars(trange, name = 'batt_level_region_{}'.format(i + 1))
+        h2_level     = m.addVars(trange, name = 'h2_level_region_{}'.format(i + 1))
+        ev_charging  = m.addVars(trange, ub=ev_load_mw[i] * 6, name = 'ev_charging_region_{}'.format(i + 1))
 
         # Initialize netload variables
-        netload_diff = m.addVars(trange, lb=-GRB.INFINITY)
-        netload_abs  = m.addVars(trange, obj=gt_diff_cost)
-        netload      = m.addVars(trange, obj=args.netload_cost_mwh[i], name="netload_region" + str(i + 1))
-
-        m.update()
+        netload_diff = m.addVars(trange, lb=-GRB.INFINITY, name = "netload_diff_region_{}".format(i + 1))
+        netload_abs  = m.addVars(trange, obj=gt_diff_cost, name =  "netload_abs_region_{}".format(i + 1))
+        netload      = m.addVars(trange, obj=args.netload_cost_mwh[i], name="netload_region_{}".format(i + 1))
 
         # Set up initial battery cap constraints
         batt_level[0] = 0  # battery_cap_mwh/2
         h2_level[0] = h2_cap_mwh / 2
-
-        m.update()
 
         # Initialize H2 constraints based on model run specifics
         if not h2_boolean:
             m.addConstr(h2_cap_mwh == 0)
             m.addConstr(h2_cap_mw == 0)
 
+
+        # Find all export/import time series for energy balance -- these variables will find the same time series
+        # but in different regions
+        tx_export_keys = [k for k in tx_ts_dict.keys() if 'ts_{}'.format(i + 1) in k]
+        tx_import_keys = [k for k in tx_ts_dict.keys() if 'to_{}'.format(i + 1) in k]
+
         m.update()
 
         # Add time-series Constraints
         for j in trange:
+            # Sum all the transmission export timeseries for region i at time step j
+
+            if len(tx_export_keys) > 0:
+                total_exports = quicksum(tx_ts_dict[tx_export_keys[k]][j] for k in range(len(tx_export_keys)))
+            else:
+                total_exports = 0
+
+            # Sum all the transmission import timeseries for region i at time step j
+            if len(tx_import_keys) > 0:
+                total_imports = quicksum(tx_ts_dict[tx_import_keys[k]][j] for k in range(len(tx_import_keys)))
+            else:
+                total_imports = 0
+
 
             if j == 0:
                 # Load constraint: No battery/H2 operation in time t=0
-                m.addConstr(offshore_windutil[j] + onshore_windutil[j] + solar_util[j] + flex_hydro_mw[j] - \
-                            ev_charging[j] - (exports_EW[j] + exports_WE[j]) + \
-                            args.trans_eff * (imports_EW[j] + imports_WE[j]) + hq_imports[j] + netload[j] == \
+                m.addConstr(offshore_windutil[j] + onshore_windutil[j] + solar_util[j] + flex_hydro_mw[j] -
+                            ev_charging[j] - total_exports +  args.trans_eff*total_imports +
+                            hq_imports[j] + netload[j] ==
                             baseline_demand[j, i] + heating_load_mw[j, i] - fixed_hydro_mw[j, i] - nuc_gen_mw[i])
             else:
                 # Load constraint: Add battery constraints for all other times series
-                m.addConstr(offshore_windutil[j] + onshore_windutil[j] + solar_util[j] + flex_hydro_mw[j] - \
-                            batt_charge[j] + batt_discharge[j] - h2_charge[j] + h2_discharge[j] - \
-                            ev_charging[j] - (exports_EW[j] + exports_WE[j]) + \
-                            args.trans_eff * (imports_EW[j] + imports_WE[j]) + hq_imports[j] + netload[j] == \
+                m.addConstr(offshore_windutil[j] + onshore_windutil[j] + solar_util[j] + flex_hydro_mw[j] -
+                            batt_charge[j] + batt_discharge[j] - h2_charge[j] + h2_discharge[j] -
+                            ev_charging[j] - total_exports +  args.trans_eff*total_imports +
+                            hq_imports[j] + netload[j] ==
                             baseline_demand[j, i] + heating_load_mw[j, i] - fixed_hydro_mw[j, i] - nuc_gen_mw[i])
 
                 # Battery/H2 energy conservation constraints
-                m.addConstr(batt_discharge[j] / args.battery_eff - args.battery_eff * batt_charge[j] == \
+                m.addConstr(batt_discharge[j] / args.battery_eff - args.battery_eff * batt_charge[j] ==
                             ((1 - args.self_discharge) * batt_level[j - 1] - batt_level[j]))
-                m.addConstr(h2_discharge[j] / args.h2_eff - args.h2_eff * h2_charge[j] == \
+                m.addConstr(h2_discharge[j] / args.h2_eff - args.h2_eff * h2_charge[j] ==
                             ((1 - args.self_discharge) * h2_level[j - 1] - h2_level[j]))
 
                 # Battery operation constraints
@@ -188,13 +240,8 @@ def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw,
             m.addConstr(solar_util[j] - (solar_cap * solar_pot[j, i]) <= 0)
 
             ## Net load constraints
-            m.addConstr(netload[j] - gt_cap <= 0)
+            m.addConstr(netload[j] - (gt_cap + gt_current_cap[i]) <= 0)
 
-            # Add Import/Export Cap Constraints
-            m.addConstr(exports_EW[j] - exports_EW_cap <= 0)
-            m.addConstr(imports_EW[j] - imports_EW_cap <= 0)
-            m.addConstr(exports_WE[j] - exports_WE_cap <= 0)
-            m.addConstr(imports_WE[j] - imports_WE_cap <= 0)
 
             # Add constraints for new HQ imports into NYC -- This is to ensure constant flow of power
             if i == 2:
@@ -221,100 +268,55 @@ def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw,
 
 
     ## Initialize constraints for multi-region variables
-    # Data structures for equating transmission variables
-    model_data_exports_EW_region1 = {}
-    model_data_imports_EW_region1 = {}
-    model_data_exports_WE_region1 = {}
-    model_data_imports_WE_region1 = {}
-    model_data_exports_EW_region2 = {}
-    model_data_imports_EW_region2 = {}
-    model_data_exports_WE_region2 = {}
-    model_data_imports_WE_region2 = {}
-    model_data_exports_EW_region3 = {}
-    model_data_imports_EW_region3 = {}
-    model_data_exports_WE_region3 = {}
-    model_data_imports_WE_region3 = {}
-    model_data_exports_EW_region4 = {}
-    model_data_imports_EW_region4 = {}
-    model_data_exports_WE_region4 = {}
-    model_data_imports_WE_region4 = {}
 
     # Data structures for setting net load equal to a percent of the load
-    model_data_netload_region1 = {}
-    model_data_netload_region2 = {}
-    model_data_netload_region3 = {}
-    model_data_netload_region4 = {}
+    model_data_netload_region_1 = {}
+    model_data_netload_region_2 = {}
+    model_data_netload_region_3 = {}
+    model_data_netload_region_4 = {}
 
     # Data structure for setting offshore wind capacity equal to NREL limit
     model_data_offshore_cap = {}
 
     ## Data structures for retrieving Hydro Quebec import time series
-    hq_import_region1 = {}
-    hq_import_region3 = {}
+    hq_import_region_1 = {}
+    hq_import_region_3 = {}
 
-    for i in trange:
-        model_data_exports_EW_region1[i] = m.getVarByName("exports_EW_region1[" + str(i) + "]")
-        model_data_imports_EW_region1[i] = m.getVarByName("imports_EW_region1[" + str(i) + "]")
-        model_data_exports_WE_region1[i] = m.getVarByName("exports_WE_region1[" + str(i) + "]")
-        model_data_imports_WE_region1[i] = m.getVarByName("imports_WE_region1[" + str(i) + "]")
+    for j in trange:
 
-        model_data_exports_EW_region2[i] = m.getVarByName("exports_EW_region2[" + str(i) + "]")
-        model_data_imports_EW_region2[i] = m.getVarByName("imports_EW_region2[" + str(i) + "]")
-        model_data_exports_WE_region2[i] = m.getVarByName("exports_WE_region2[" + str(i) + "]")
-        model_data_imports_WE_region2[i] = m.getVarByName("imports_WE_region2[" + str(i) + "]")
+        model_data_netload_region_1[j]    = m.getVarByName("netload_region_1[{}]".format(j))
+        model_data_netload_region_2[j]    = m.getVarByName("netload_region_2[{}]".format(j))
+        model_data_netload_region_3[j]    = m.getVarByName("netload_region_3[{}]".format(j))
+        model_data_netload_region_4[j]    = m.getVarByName("netload_region_4[{}]".format(j))
 
-        model_data_exports_EW_region3[i] = m.getVarByName("exports_EW_region3[" + str(i) + "]")
-        model_data_imports_EW_region3[i] = m.getVarByName("imports_EW_region3[" + str(i) + "]")
-        model_data_exports_WE_region3[i] = m.getVarByName("exports_WE_region3[" + str(i) + "]")
-        model_data_imports_WE_region3[i] = m.getVarByName("imports_WE_region3[" + str(i) + "]")
-
-        model_data_exports_EW_region4[i] = m.getVarByName("exports_EW_region4[" + str(i) + "]")
-        model_data_imports_EW_region4[i] = m.getVarByName("imports_EW_region4[" + str(i) + "]")
-        model_data_exports_WE_region4[i] = m.getVarByName("exports_WE_region4[" + str(i) + "]")
-        model_data_imports_WE_region4[i] = m.getVarByName("imports_WE_region4[" + str(i) + "]")
-
-        model_data_netload_region1[i]    = m.getVarByName("netload_region1[" + str(i) + "]")
-        model_data_netload_region2[i]    = m.getVarByName("netload_region2[" + str(i) + "]")
-        model_data_netload_region3[i]    = m.getVarByName("netload_region3[" + str(i) + "]")
-        model_data_netload_region4[i]    = m.getVarByName("netload_region4[" + str(i) + "]")
-
-        hq_import_region1[i]             = m.getVarByName("hq_import_region1[" + str(i) + "]")
-        hq_import_region3[i]             = m.getVarByName("hq_import_region3[" + str(i) + "]")
+        hq_import_region_1[j]             = m.getVarByName("hq_import_region_1[{}]".format(j))
+        hq_import_region_3[j]             = m.getVarByName("hq_import_region_3[{}]".format(j))
 
     m.update()
 
-    # Set transmission equal across lines
-    for i in trange:
-        ## Zone 1-2
-        m.addConstr(model_data_exports_WE_region1[i] - model_data_imports_WE_region2[i] == 0)
-        m.addConstr(model_data_imports_EW_region1[i] - model_data_exports_EW_region2[i] == 0)
-
-        ## Zone 2-3
-        m.addConstr(model_data_exports_WE_region2[i] - model_data_imports_WE_region3[i] == 0)
-        m.addConstr(model_data_imports_EW_region2[i] - model_data_exports_EW_region3[i] == 0)
-
-        # Zone 3-4
-        m.addConstr(model_data_exports_WE_region3[i] - model_data_imports_WE_region4[i] == 0)
-        m.addConstr(model_data_imports_EW_region3[i] - model_data_exports_EW_region4[i] == 0)
-
     # Offshore generation constraints
     for i in range(args.num_regions):
-        model_data_offshore_cap[i] = m.getVarByName("offshore_cap_region" + str(i + 1))
+        model_data_offshore_cap[i] = m.getVarByName("offshore_cap_region_{}".format(i+1))
 
-    m.addConstr((model_data_offshore_cap[0] + model_data_offshore_cap[1] +
-                 model_data_offshore_cap[2] + model_data_offshore_cap[3]) <= 37572)
+    m.addConstr((model_data_offshore_cap[2] + model_data_offshore_cap[3]) <= 37572)
 
     # Low-carbon electricity constraint
-    full_netload_sum_mwh = quicksum(model_data_netload_region1[i] + model_data_netload_region2[i] +
-                                    model_data_netload_region3[i] + model_data_netload_region4[i] for i in trange)
-    full_demand_sum_mwh  = (np.sum(baseline_demand[0:T]) + np.sum(heating_load_mw[0:T]) + np.sum(ev_load_mw) * T)
-    full_imports_sum_mwh = quicksum(hq_import_region1[i] + hq_import_region3[i] for i in trange)
+    full_netload_sum_mwh = quicksum(model_data_netload_region_1[j] + model_data_netload_region_2[j] +
+                                    model_data_netload_region_3[j] + model_data_netload_region_4[j] for j in trange)
+    full_demand_sum_mwh  = np.sum(baseline_demand[0:T]) + np.sum(heating_load_mw[0:T]) + np.sum(ev_load_mw) * T
+    full_imports_sum_mwh = quicksum(hq_import_region_1[j] + hq_import_region_3[j] for j in trange)
     full_nuclear_sum_mwh = np.sum(nuc_gen_mw) * T
 
     frac_netload = 1 - lowc_target
 
-    m.addConstr(full_netload_sum_mwh  - ((full_demand_sum_mwh - full_imports_sum_mwh) * frac_netload -
-                full_nuclear_sum_mwh) <= 0)
+    m.update()
+
+    if args.rgt_boolean:
+        m.addConstr(full_netload_sum_mwh + full_nuclear_sum_mwh -
+                    (full_demand_sum_mwh - full_imports_sum_mwh) * frac_netload <= 0)
+    else:
+        m.addConstr(full_netload_sum_mwh -
+                (frac_netload * (full_demand_sum_mwh - full_imports_sum_mwh))  <= 0)
 
 
 
