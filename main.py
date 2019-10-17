@@ -10,8 +10,8 @@ if __name__ == '__main__':
     h2_boolean = False
 
     # Define set of heating and EV loads for the model runs
-    lowc_targets  = [0.7]
-    heating_loads = [0] # Max is 8620 MW
+    lowc_targets  = [1]
+    heating_loads = [8620] # Max is 8620 MW
     ev_loads      = [0] # Max is 6660 MW
 
     # Define number of tests to run, i.e. the length of the above lists
