@@ -165,8 +165,8 @@ def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw,
         netload      = m.addVars(trange, obj=args.netload_cost_mwh[i], name="netload_region_{}".format(i + 1))
 
         # Set up initial battery cap constraints
-        batt_level[0] = 0.5 * battery_cap_mwh
-        h2_level[0]   = 0.5 * h2_cap_mwh
+        batt_level[0] = battery_cap_mwh
+        h2_level[0]   = h2_cap_mwh
 
         # Initialize H2 constraints based on model run specifics
         if not h2_boolean:
@@ -313,10 +313,10 @@ def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw,
 
     if args.rgt_boolean:
         m.addConstr(full_netload_sum_mwh + full_nuclear_sum_mwh -
-                    (full_demand_sum_mwh - full_imports_sum_mwh) * frac_netload <= 0)
+                    (full_demand_sum_mwh - full_imports_sum_mwh) * (np.max((frac_netload, args.supp_limit))) <= 0)
     else:
         m.addConstr(full_netload_sum_mwh -
-                (frac_netload * (full_demand_sum_mwh - full_imports_sum_mwh))  <= 0)
+                (np.max((frac_netload, args.supp_limit))) * (full_demand_sum_mwh - full_imports_sum_mwh)  <= 0)
 
 
 
