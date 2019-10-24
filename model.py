@@ -185,16 +185,25 @@ def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw,
         for j in trange:
             # Sum all the transmission export timeseries for region i at time step j
 
-            if len(tx_export_keys) > 0:
-                total_exports = quicksum(tx_ts_dict[tx_export_keys[k]][j] for k in range(len(tx_export_keys)))
-            else:
-                total_exports = 0
+            total_exports = 0
+            total_imports = 0
 
-            # Sum all the transmission import timeseries for region i at time step j
+            ## Sum export flows for region i at time step j, applying transmission losses to neg. exports only
+            if len(tx_export_keys) > 0:
+                for k in range(len(tx_export_keys)):
+                    if tx_ts_dict[tx_export_keys[k]][j] < 0:
+                        total_exports += args.trans_eff * tx_ts_dict[tx_export_keys[k]][j]
+                    else:
+                        total_exports += tx_ts_dict[tx_export_keys[k]][j]
+
+            ## Sum import flows for region i at time step j, applying transmission losses to pos. imports only
             if len(tx_import_keys) > 0:
-                total_imports = quicksum(tx_ts_dict[tx_import_keys[k]][j] for k in range(len(tx_import_keys)))
-            else:
-                total_imports = 0
+                for k in range(len(tx_export_keys)):
+                    if tx_ts_dict[tx_import_keys[k]][j] > 0:
+                        total_imports += args.trans_eff * tx_ts_dict[tx_import_keys[k]][j]
+                    else:
+                        total_imports += tx_ts_dict[tx_import_keys[k]][j]
+
 
 
             if j == 0:
