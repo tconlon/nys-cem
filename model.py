@@ -127,7 +127,9 @@ def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw,
         for export_region in tx_export_regions_set:
             # Time series variable, must set lowerbound to -Infinity since we are allowing 'negative' flow
             tx_export_vars = m.addVars(trange, name= 'net_exports_ts_{}_to_{}'.format(i+1, export_region),
-                                       lb = -GRB.INFINITY)
+                                       lb = 0)
+            tx_import_vars = m.addVars(trange, name='net_exports_ts_{}_to_{}'.format(i + 1, export_region),
+                                       lb = 0)
 
             # Export cap is = new cap + existing cap (from dictionary)
             tx_export_cap  = m.getVarByName("new_export_limits_{}_{}".format(i + 1, export_region)) + \
@@ -140,12 +142,16 @@ def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw,
 
             # Constrain individual Tx flow variables to the export import capacity
             for j in trange:
-                m.addConstr(tx_export_vars[j] + tx_import_cap >= 0)
                 m.addConstr(tx_export_vars[j] - tx_export_cap <= 0)
+                m.addConstr(tx_import_vars[j] - tx_import_cap >= 0)
 
             # Store these tx flow variables in the time series dictionary for energy balance equation
             tx_ts_dict['net_exports_ts_{}_to_{}'.format(i+1, export_region)] = tx_export_vars
+            tx_ts_dict['net_exports_ts_{}_to_{}'.format(export_region, i+1)] = tx_import_vars
 
+
+
+        print(tx_ts_dict.keys())
         m.update()
 
 
@@ -181,29 +187,24 @@ def create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw,
 
         m.update()
 
+        print(tx_export_keys)
+        print(tx_import_keys)
+
         # Add time-series Constraints
         for j in trange:
             # Sum all the transmission export timeseries for region i at time step j
 
-            total_exports = 0
-            total_imports = 0
 
-            ## Sum export flows for region i at time step j, applying transmission losses to neg. exports only
             if len(tx_export_keys) > 0:
-                for k in range(len(tx_export_keys)):
-                    if tx_ts_dict[tx_export_keys[k]][j] < 0:
-                        total_exports += args.trans_eff * tx_ts_dict[tx_export_keys[k]][j]
-                    else:
-                        total_exports += tx_ts_dict[tx_export_keys[k]][j]
+                total_exports = quicksum(tx_ts_dict[tx_export_keys[k]][j] for k in range(len(tx_export_keys)))
+            else:
+                total_exports = 0
 
-            ## Sum import flows for region i at time step j, applying transmission losses to pos. imports only
+            # Sum all the transmission import timeseries for region i at time step j
             if len(tx_import_keys) > 0:
-                for k in range(len(tx_export_keys)):
-                    if tx_ts_dict[tx_import_keys[k]][j] > 0:
-                        total_imports += args.trans_eff * tx_ts_dict[tx_import_keys[k]][j]
-                    else:
-                        total_imports += tx_ts_dict[tx_import_keys[k]][j]
-
+                total_imports = quicksum(tx_ts_dict[tx_import_keys[k]][j] for k in range(len(tx_import_keys)))
+            else:
+                total_imports = 0
 
 
             if j == 0:

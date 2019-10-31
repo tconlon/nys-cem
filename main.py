@@ -10,9 +10,9 @@ if __name__ == '__main__':
     h2_boolean = False
 
     # Define set of heating and EV loads for the model runs
-    lowc_targets  = [1]
-    heating_loads = [8620] # Max is 8620 MW
-    ev_loads      = [6660] # Max is 6660 MW
+    lowc_targets  = [0.8]
+    heating_loads = [0] # Max is 8620 MW
+    ev_loads      = [0] # Max is 6660 MW
 
     # Define number of tests to run, i.e. the length of the above lists
     num_test = len(lowc_targets)
@@ -56,6 +56,10 @@ if __name__ == '__main__':
     df_results_raw.to_excel(os.path.join(args.results_dir, 'raw_results_export.xlsx'))
     np.save(os.path.join(args.results_dir,'raw_results_ts.npy'), np.array(results_ts))
 
+    np.save(os.path.join(args.results_dir, 'raw_results_temp.npy'), np.array(results))
+
+    results = np.load(os.path.join(args.results_dir, 'raw_results_temp.npy'))
+    results_ts = np.load(os.path.join(args.results_dir, 'raw_results_ts.npy'))
 
     ## Save processed results
     df_results_processed = full_results_processing(args, np.array(results), np.array(results_ts), lowc_targets,
