@@ -4,7 +4,7 @@ data_dir: '../data_uploads'
 results_dir: '../model_results'
 
 # General model assumptions
-num_years: 6
+num_years: 1
 num_regions: 4
 i_rate: 0.05
 annualize_years_cap: 20
@@ -48,7 +48,7 @@ ev_charging_method: 'flexible' # or fixed
 ev_load_dist: [0.370449679, 0.177730193, 0.243040685, 0.208779443]
 
 # Other various assumptions
-trans_eff: 0.97
+trans_loss: 0.03
 reserve_req: 1.17
 supp_limit: 0.005
 hqch_capacity_factor: 0.9

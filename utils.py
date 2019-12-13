@@ -127,9 +127,9 @@ def raw_results_retrieval(args, m, tx_tuple_list, heating_load_cap, ev_load_cap,
     timeseries_results = np.zeros((15, T, args.num_regions))
     for i in range(args.num_regions):
         for j in range(T):
-            timeseries_results[0, j, i]  = m.getVarByName('onshore_wind_util_region_{}[{}]'.format(i + 1, j)).X
-            timeseries_results[1, j, i]  = m.getVarByName('offshore_wind_util_region_{}[{}]'.format(i + 1, j)).X
-            timeseries_results[2, j, i]  = m.getVarByName('solar_util_region_{}[{}]'.format(i + 1, j)).X
+            # timeseries_results[0, j, i]  = m.getVarByName('onshore_wind_util_region_{}[{}]'.format(i + 1, j)).X
+            # timeseries_results[1, j, i]  = m.getVarByName('offshore_wind_util_region_{}[{}]'.format(i + 1, j)).X
+            # timeseries_results[2, j, i]  = m.getVarByName('solar_util_region_{}[{}]'.format(i + 1, j)).X
             timeseries_results[3, j, i]  = m.getVarByName('flex_hydro_region_{}[{}]'.format(i + 1, j)).X
             timeseries_results[4, j, i]  = m.getVarByName('batt_charge_region_{}[{}]'.format(i + 1, j)).X
             timeseries_results[5, j, i]  = m.getVarByName('batt_discharge_region_{}[{}]'.format(i + 1, j)).X
