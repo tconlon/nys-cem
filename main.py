@@ -1,4 +1,4 @@
-from model import create_model
+from model_dual_trans_constrs import create_model
 from utils import *
 
 if __name__ == '__main__':
@@ -10,7 +10,7 @@ if __name__ == '__main__':
     h2_boolean = False
 
     # Define set of heating and EV loads for the model runs
-    lowc_targets  = [0.8]
+    lowc_targets  = [0.6]
     heating_loads = [0] # Max is 8620 MW
     ev_loads      = [0] # Max is 6660 MW
 
@@ -32,8 +32,10 @@ if __name__ == '__main__':
 
         # Set model solver parameters
         m.setParam("FeasibilityTol", args.feasibility_tol)
-        m.setParam("Method", args.solver_method)
-        # m.setParam("Threads", 4)
+        m.setParam("Method", 2)
+        m.setParam("BarConvTol", 0)
+        m.setParam("BarOrder", 0)
+        m.setParam("Crossover", 0)
 
         # Solve the model
         m.optimize()
@@ -55,11 +57,6 @@ if __name__ == '__main__':
     df_results_raw = pd.DataFrame(np.array(results), columns=raw_export_columns)
     df_results_raw.to_excel(os.path.join(args.results_dir, 'raw_results_export.xlsx'))
     np.save(os.path.join(args.results_dir,'raw_results_ts.npy'), np.array(results_ts))
-
-    np.save(os.path.join(args.results_dir, 'raw_results_temp.npy'), np.array(results))
-
-    results = np.load(os.path.join(args.results_dir, 'raw_results_temp.npy'))
-    results_ts = np.load(os.path.join(args.results_dir, 'raw_results_ts.npy'))
 
     ## Save processed results
     df_results_processed = full_results_processing(args, np.array(results), np.array(results_ts), lowc_targets,

@@ -155,7 +155,7 @@ def raw_results_retrieval(args, m, tx_tuple_list, heating_load_cap, ev_load_cap,
 
     for i, txt in enumerate(tx_tuple_list):
 
-        tx_new_cap_results[i] = m.getVarByName(tx_cap_base_string.format(txt[0][0], txt[0][1])).X
+        tx_new_cap_results[i]   = m.getVarByName(tx_cap_base_string.format(txt[0][0], txt[0][1])).X
         tx_total_cap_results[i] = m.getVarByName(tx_cap_base_string.format(txt[0][0], txt[0][1])).X + txt[1]
 
         if txt[0][1] > txt[0][0]:
@@ -260,9 +260,13 @@ def raw_results_retrieval(args, m, tx_tuple_list, heating_load_cap, ev_load_cap,
     results_ts[:, args.num_regions * 5: args.num_regions * 6] = timeseries_results[14] # ev charging
     results_ts[:, args.num_regions * 6: args.num_regions * 6 + 3] = tx_ts_results # WE transmission flow
 
+
+
     return results, results_ts
 
 def full_results_processing(args, results, results_ts, lct, nuclear_boolean, h2_boolean):
+
+
     # Retrieve necessary model parameters
     export_columns = get_processed_columns()
     T = args.num_years * 8760
