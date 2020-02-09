@@ -1,10 +1,14 @@
 # Model run parameters
+model_config: 0 # 0: LCT + Elec. specified, GHG returned; 1: LCT + GHG. specified, Elec. returned;
+#                 2: LCT + GHG. specified, Elec. returned;
 rgt_boolean: False
 data_dir: '../data_uploads'
 results_dir: '../model_results'
+nuclear_boolean: False
+h2_boolean: False
 
 # General model assumptions
-num_years: 6
+num_years: 1
 num_regions: 4
 i_rate: 0.05
 annualize_years_cap: 20
@@ -39,22 +43,26 @@ self_discharge: 0.001
 battery_p2e_ratio_range: [0.25, 8]
 h2_p2e_ratio_range: [0, 1e100]
 
+# Heating assumptions
+heating_load_dist: [0.5866352, 0.09192513, 0.20545611, 0.11598355]
+heating_max_cap: 8620
+
 # EV assumptions
 ev_charging_p2e_ratio: 0.166666667
 ev_eff: 0.948
 ev_hours_start: 19
-ev_charging_hours: 24
+ev_charging_hours: 12
 ev_charging_method: 'flexible' # or fixed
 ev_load_dist: [0.370449679, 0.177730193, 0.243040685, 0.208779443]
+ev_max_cap: 6660
 
 # Other various assumptions
 trans_loss: 0.03
 reserve_req: 1.17
-supp_limit: 0.005
 hqch_capacity_factor: 0.9
 
 # Existing capacity and transmission cost assumptions
-cap_market_cost_mw_yr: [27640, 27640, 104600, 104600]  # $/MW-yr
+cap_market_cost_mw_yr:   [27640, 27640, 104600, 104600]  # $/MW-yr
 existing_trans_load_mwh: [74.533e6, 50.829e6, 18.400e6]
 existing_trans_cost_mwh: [15.6, 21.8, 41.0]
 
@@ -66,5 +74,5 @@ instate_hydro_cost_mwh: 18
 instate_nuc_cost_mwh: 75
 
 # Gurobi solver parameters
-feasibility_tol: 0.01
+feasibility_tol: 0.005
 solver_method: -1

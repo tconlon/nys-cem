@@ -1,34 +1,47 @@
-from model_dual_trans_constrs import create_model
+import numpy as np
+from model import create_model
 from utils import *
+
 
 if __name__ == '__main__':
     args    = get_args()
-    raw_export_columns = get_raw_columns()
+    raw_export_columns, ts_export_columns = get_raw_columns()
 
-    ## Establish model run parameters
-    nuclear_boolean = False
-    h2_boolean = False
 
-    # Define set of heating and EV loads for the model runs
-    lowc_targets  = [0.6]
-    heating_loads = [0] # Max is 8620 MW
-    ev_loads      = [0] # Max is 6660 MW
+    # Define model config and set of heating, EV loads, and/or GHG reduction target appropriately
+    model_config = 0
 
-    # Define number of tests to run, i.e. the length of the above lists
-    num_test = len(lowc_targets)
+    # 0: LCT + Elec. specified, GHG returned
+    if model_config == 0:
+        perc_elec_load = [0.2, 0.4, 0.6, 0.8] #, .389, .550, .849, .944, 1]
+        lowc_targets   = [0.8] * 4 #, 1, 1, .7, 1, .947]
+        ghg_targets    = [np.nan]*len(perc_elec_load) # indeterminate
+
+    # 1: LCT + GHG specified, Elec. returned
+    elif model_config == 1:
+        lowc_targets = [0.7, 0.7]
+        ghg_targets  = [0.4, 0.45]
+        perc_elec_load = [np.nan]*len(lowc_targets) # indeterminate
+
+    # 2: Elec. + GHG specified, LCT returned.
+    else: # model_config  == 2:
+        ghg_targets    = [0.4, 0.45]
+        perc_elec_load = [.389, .389]
+        lowc_targets   = [np.nan]*len(ghg_targets) # indeterminate
+
 
     # Establish lists to store results
     results    = []
     results_ts = []
 
-    for i in range(num_test):
+    for i in range(len(perc_elec_load)):
         # Initialize scenario parameters
-        heating_cap_mw  = heating_loads[i]
-        ev_cap_mw       = ev_loads[i]
-        lowc_target     = lowc_targets[i]
+        elec = perc_elec_load[i]
+        lct  = lowc_targets[i]
+        ghg  = ghg_targets[i]
 
         # Create the model
-        m = create_model(args, lowc_target, nuclear_boolean, h2_boolean, heating_cap_mw, ev_cap_mw)
+        m = create_model(args, model_config, elec, lct,  ghg)
 
         # Set model solver parameters
         m.setParam("FeasibilityTol", args.feasibility_tol)
@@ -45,9 +58,7 @@ if __name__ == '__main__':
 
         # Process the model solution
         tx_tuple_list = get_tx_tuples(args)
-        single_scen_results, single_scen_results_ts = raw_results_retrieval(args, m, tx_tuple_list, heating_cap_mw,
-                                                                            ev_cap_mw, lowc_target, nuclear_boolean,
-                                                                            h2_boolean)
+        single_scen_results, single_scen_results_ts = raw_results_retrieval(args, model_config, m, tx_tuple_list)
 
         # Append single set of results to full results lists
         results.append(single_scen_results)
@@ -56,9 +67,14 @@ if __name__ == '__main__':
     ## Save raw results
     df_results_raw = pd.DataFrame(np.array(results), columns=raw_export_columns)
     df_results_raw.to_excel(os.path.join(args.results_dir, 'raw_results_export.xlsx'))
-    np.save(os.path.join(args.results_dir,'raw_results_ts.npy'), np.array(results_ts))
+
+
+    ts_writer = pd.ExcelWriter(os.path.join(args.results_dir, 'ts_results_export.xlsx'), engine= 'xlsxwriter')
+    for i in range(len(results_ts)):
+        df_results_ts = pd.DataFrame(np.array(results_ts[i]), columns=ts_export_columns)
+        df_results_ts.to_excel(ts_writer, sheet_name = 'Sheet{}'.format(i+1))
+    ts_writer.save()
 
     ## Save processed results
-    df_results_processed = full_results_processing(args, np.array(results), np.array(results_ts), lowc_targets,
-                                                   nuclear_boolean, h2_boolean)
+    df_results_processed = full_results_processing(args, np.array(results), np.array(results_ts))
     df_results_processed.to_excel(os.path.join(args.results_dir, 'processed_results_export.xlsx'))
