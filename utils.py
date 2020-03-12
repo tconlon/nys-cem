@@ -24,22 +24,30 @@ def get_args():
     return args
 
 def load_timeseries(args):
-    T = 8760 * args.num_years
+    T = args.num_years*8760 + ((args.num_years+2)//4)*24 ## Account for leap years starting in 2008
 
     # Load all potential generation and actual hydro generation time-series
-    onshore_pot_hourly        = np.load(os.path.join(args.data_dir, 'onshore_pot_hourly.npy'))
-    offshore_pot_hourly       = np.load(os.path.join(args.data_dir, 'offshore_pot_hourly.npy'))
-    solar_pot_hourly          = np.load(os.path.join(args.data_dir, 'solar_pot_hourly.npy'))
-    flex_hydro_daily_mwh      = np.load(os.path.join(args.data_dir, 'flex_hydro_daily_mwh.npy'))
-    fixed_hydro_hourly_mw     = np.load(os.path.join(args.data_dir, 'fixed_hydro_hourly_mw.npy'))
+    onshore_pot_hourly        = np.array(pd.read_csv(os.path.join(args.data_dir, 'onshore_power_hourly_norm.csv'),
+                                                     index_col=0))[0:T]
+    offshore_pot_hourly       = np.array(pd.read_csv(os.path.join(args.data_dir, 'offshore_power_hourly_norm.csv'),
+                                                     index_col=0))[0:T]
+    solar_pot_hourly          = np.array(pd.read_csv(os.path.join(args.data_dir, 'solar_power_hourly_norm.csv'),
+                                                     index_col=0))[0:T]
+    flex_hydro_daily_mwh      = np.array(pd.read_csv(os.path.join(args.data_dir, 'flex_hydro_daily_mwh.csv'),
+                                                     index_col=0))[0:T]
+    fixed_hydro_hourly_mw     = np.array(pd.read_csv(os.path.join(args.data_dir, 'fixed_hydro_hourly_mw.csv'),
+                                                     index_col=0))[0:T]
 
     # Load baseline and full heating demand time series
-    baseline_demand_hourly_mw = np.load(os.path.join(args.data_dir, 'baseline_demand_hourly_mw.npy'))
-    heating_pot_hourly        = np.load(os.path.join(args.data_dir, 'nys_heating_mw.npy'))
-    heating_pot_hourly        = heating_pot_hourly / (np.sum(np.mean(heating_pot_hourly, axis = 0)))
+    baseline_demand_hourly_mw = np.array(pd.read_csv(os.path.join(args.data_dir, 'baseline_demand_hourly_mw.csv'),
+                                                     index_col=0))[0:T]
+    heating_hourly            = np.array(pd.read_csv(os.path.join(args.data_dir, 'elec_heating_hourly_mw.csv'),
+                                                     index_col=0))[0:T]
+    heating_pot_hourly        = heating_hourly / (np.sum(np.mean(heating_hourly[0:T], axis = 0)))
 
 
-    return baseline_demand_hourly_mw, heating_pot_hourly, onshore_pot_hourly, offshore_pot_hourly, \
+
+    return baseline_demand_hourly_mw, heating_hourly, heating_pot_hourly, onshore_pot_hourly, offshore_pot_hourly, \
            solar_pot_hourly, fixed_hydro_hourly_mw, flex_hydro_daily_mwh
 
 
@@ -66,7 +74,8 @@ def get_raw_columns():
                   'base_demand_1', 'base_demand_2', 'base_demand_3', 'base_demand_4',
                   'heating_demand_1', 'heating_demand_2', 'heating_demand_3', 'heating_demand_4',
                   'ev_charging_1', 'ev_charging_2', 'ev_charging_3', 'ev_charging_4',
-                  'net_load_1', 'net_load_2', 'net_load_3', 'net_load_4',
+                  'existing_gt_gen_1', 'existing_gt_gen_2', 'existing_gt_gen_3', 'existing_gt_gen_4',
+                  'new_gt_gen_1', 'new_gt_gen_2', 'new_gt_gen_3', 'new_gt_gen_4',
                   'battery_level_1', 'battery_level_2', 'battery_level_3', 'battery_level_4',
                   'h2_level_1','h2_level_2','h2_level_3','h2_level_4',
                   'hq_import_1', 'hq_import_2', 'hq_import_3', 'hq_import_4',
@@ -93,9 +102,13 @@ def get_processed_columns():
     return  columns
 
 def get_tx_tuples(args):
+    cap_ann = annualization_rate(args.i_rate, args.annualize_years_cap)
+
     tx_matrix_limits = pd.read_excel(os.path.join(args.data_dir, 'transmission_matrix_limits.xlsx'),
                                      header=0, index_col=0)
-    tx_matrix_costs = pd.read_excel(os.path.join(args.data_dir, 'transmission_matrix_costs.xlsx'),
+    tx_matrix_cap_costs = pd.read_excel(os.path.join(args.data_dir, 'transmission_matrix_capacity_costs.xlsx'),
+                                    header=0, index_col=0)
+    tx_matrix_om_costs = pd.read_excel(os.path.join(args.data_dir, 'transmission_matrix_o&m_costs.xlsx'),
                                     header=0, index_col=0)
 
     tx_tuple_list = []
@@ -103,7 +116,9 @@ def get_tx_tuples(args):
     for i in range(len(tx_matrix_limits)):
         for j in range(len(tx_matrix_limits.columns)):
             if tx_matrix_limits.iloc[i, j] > 0:
-                tx_tuple_list.append(((i + 1, j + 1), tx_matrix_limits.iloc[i, j], tx_matrix_costs.iloc[i, j]))
+                tx_tuple_list.append(((i + 1, j + 1), tx_matrix_limits.iloc[i, j],
+                                      args.num_years * cap_ann * tx_matrix_cap_costs.iloc[i, j] +
+                                      tx_matrix_om_costs.iloc[i, j]))
 
     return tx_tuple_list
 
@@ -112,15 +127,26 @@ def load_gt_ramping_costs(args, results, results_ts):
     ramping_cost_mwh = args.gt_startup_cost_mw/2
 
     net_load_ramping_total_cost = np.zeros(results.shape[0])
-    net_load_total_cost         = np.zeros(results.shape[0])
+    net_load_fuel_cost          = np.zeros(results.shape[0])
+    net_load_om_cost            = np.zeros(results.shape[0])
 
     for i in range(results.shape[0]):
-        net_load = results_ts[i, :, 20:24]
+        existing_gt_gen = results_ts[i, :, args.num_regions * 5: args.num_regions * 6]
+        new_gt_gen      = results_ts[i, :, args.num_regions * 6: args.num_regions * 7]
+
+        net_load = existing_gt_gen + new_gt_gen
+
 
         for l in range(net_load.shape[0] - 1):
             for m in range(4):
                 net_load_ramping_total_cost[i] += abs(net_load[l + 1, m] - net_load[l, m]) * ramping_cost_mwh
-                net_load_total_cost[i]         += net_load[l, m] * args.netload_cost_mwh[m]
+                net_load_fuel_cost[i] += args.natgas_cost_mmbtu[m] * args.mmbtu_per_mwh * \
+                                                    (existing_gt_gen[l, m]/args.existing_gt_eff +
+                                                     new_gt_gen[l, m] / args.new_gt_eff)
+                net_load_om_cost[i]   +=  new_gt_gen[l, m] * args.new_gt_var_om_cost_mwh
+
+    net_load_total_cost = net_load_fuel_cost + net_load_om_cost
+
 
     return net_load_total_cost, net_load_ramping_total_cost
 
@@ -131,15 +157,14 @@ def calculate_ghg_contributions():
     existing_industrial_emissions = 10.8
     non_diesel_non_gas_transport_emissions = 13.51
 
-    nat_gas_efficiency = 0.432
     nat_gas_emissions_rate = 53.1148 # kg CO2e/MMBTU
-    heat_rate = 3.412/nat_gas_efficiency # MMBTU/MWh
-    elec_emissions_rate = nat_gas_emissions_rate * heat_rate / 1000 # MtCO2e
+    # heat_rate = 3.412/nat_gas_efficiency # MMBTU/MWh
+    # elec_emissions_rate = nat_gas_emissions_rate * heat_rate / 1000 # MtCO2e/MWh
 
     total_heating_emissions = 56.5 # MMtCO2e
     total_transport_emissions = 61.17 # MMtCO2e
 
-    return elec_emissions_rate, total_heating_emissions, total_transport_emissions, \
+    return nat_gas_emissions_rate, total_heating_emissions, total_transport_emissions, \
             baseline_1990_emissions, existing_industrial_emissions, non_diesel_non_gas_transport_emissions
 
 
@@ -154,7 +179,7 @@ def raw_results_retrieval(args, model_config, m, tx_tuple_list):
     nuclear_boolean = args.nuclear_boolean
     h2_boolean = args.h2_boolean
 
-    baseline_demand_hourly_mw, heating_pot_hourly, onshore_pot_hourly, offshore_pot_hourly, \
+    baseline_demand_hourly_mw, heating_demand, heating_pot_hourly, onshore_pot_hourly, offshore_pot_hourly, \
     solar_pot_hourly, fixed_hydro_hourly_mw, flex_hydro_daily_mwh = load_timeseries(args)
 
     gen_batt_capacity_results = np.zeros((8, args.num_regions))
@@ -183,9 +208,10 @@ def raw_results_retrieval(args, model_config, m, tx_tuple_list):
             timeseries_results[8, j, i]  = m.getVarByName('batt_level_region_{}[{}]'.format(i + 1, j)).X
             timeseries_results[9, j, i]  = m.getVarByName('h2_level_region_{}[{}]'.format(i + 1, j)).X
             timeseries_results[10, j, i] = m.getVarByName('hq_import_region_{}[{}]'.format(i + 1, j)).X
-            timeseries_results[11, j, i] = m.getVarByName('netload_region_{}[{}]'.format(i + 1, j)).X
-            timeseries_results[12, j, i] = m.getVarByName('netload_diff_region_{}[{}]'.format(i + 1, j)).X
-            timeseries_results[13, j, i] = m.getVarByName('netload_abs_region_{}[{}]'.format(i + 1, j)).X
+            timeseries_results[11, j, i] = m.getVarByName('existing_gt_gen_region_{}[{}]'.format(i + 1, j)).X
+            timeseries_results[12, j, i] = m.getVarByName('new_gt_gen_region_{}[{}]'.format(i + 1, j)).X
+            timeseries_results[13, j, i] = m.getVarByName('existing_gt_abs_region_{}[{}]'.format(i + 1, j)).X + \
+                                           m.getVarByName('new_gt_abs_region_{}[{}]'.format(i + 1, j)).X
             timeseries_results[14, j, i] = m.getVarByName('ev_charging_region_{}[{}]'.format(i + 1, j)).X
 
 
@@ -217,7 +243,7 @@ def raw_results_retrieval(args, model_config, m, tx_tuple_list):
 
     ## Export raw results
     results = np.zeros(63)
-    results_ts = np.zeros((T, args.num_regions * 12))
+    results_ts = np.zeros((T, args.num_regions * 13))
 
     # Time series results
     results_ts[:, 0:2] = onshore_pot_hourly[0:T, 0:2] * gen_batt_capacity_results[0, 0:2]  # Uncurtailed onshore gen
@@ -225,16 +251,18 @@ def raw_results_retrieval(args, model_config, m, tx_tuple_list):
     results_ts[:, args.num_regions * 1: args.num_regions * 2] = \
         solar_pot_hourly[0:T] * gen_batt_capacity_results[2, :]  # Uncurtailed solar gen
     results_ts[:, args.num_regions * 2: args.num_regions * 3] = baseline_demand_hourly_mw[0:T]  # baseline demand
-    results_ts[:, args.num_regions * 3: args.num_regions * 4] = total_heating_cap * np.array(args.heating_load_dist) * \
-                                                                heating_pot_hourly[0:T]  # heating
+    results_ts[:, args.num_regions * 3: args.num_regions * 4] = total_heating_cap * heating_pot_hourly[0:T]  # heating
     results_ts[:, args.num_regions * 4: args.num_regions * 5] = timeseries_results[14]  # ev charging
-    results_ts[:, args.num_regions * 5: args.num_regions * 6] = timeseries_results[11]  # net load
-    results_ts[:, args.num_regions * 6: args.num_regions * 7] = timeseries_results[8]  # battery level
-    results_ts[:, args.num_regions * 7: args.num_regions * 8] = timeseries_results[9]  # h2 level
-    results_ts[:, args.num_regions * 8: args.num_regions * 9] = timeseries_results[10]  # hq import
-    results_ts[:, args.num_regions * 9: args.num_regions * 10] = timeseries_results[3]  # flex hydro
-    results_ts[:, args.num_regions * 10: args.num_regions * 10 + 3] = tx_ts_results_WE  # WE transmission flow
-    results_ts[:, args.num_regions * 11: args.num_regions * 11 + 3] = tx_ts_results_EW  # EW transmission flow
+    results_ts[:, args.num_regions * 5: args.num_regions * 6] = timeseries_results[11]  # existing GT generation
+    results_ts[:, args.num_regions * 6: args.num_regions * 7] = timeseries_results[12]  # new GT generation
+
+
+    results_ts[:, args.num_regions * 7: args.num_regions * 8] = timeseries_results[8]  # battery level
+    results_ts[:, args.num_regions * 8: args.num_regions * 9] = timeseries_results[9]  # h2 level
+    results_ts[:, args.num_regions * 9: args.num_regions * 10] = timeseries_results[10]  # hq import
+    results_ts[:, args.num_regions * 10: args.num_regions * 11] = timeseries_results[3]  # flex hydro
+    results_ts[:, args.num_regions * 11: args.num_regions * 11 + 3] = tx_ts_results_WE  # WE transmission flow
+    results_ts[:, args.num_regions * 12: args.num_regions * 12 + 3] = tx_ts_results_EW  # EW transmission flow
 
     # Determine LCT
     if model_config == 0 or model_config == 1:
@@ -263,7 +291,7 @@ def raw_results_retrieval(args, model_config, m, tx_tuple_list):
     results[6] = np.around(np.sum(gen_batt_capacity_results[0,:])) # total_onshore
     results[7] = np.around(np.sum(gen_batt_capacity_results[1,:])) # total_offshore
     results[8] = np.around(np.sum(gen_batt_capacity_results[2,:])) # total_solar
-    results[9] = np.around(np.sum(gen_batt_capacity_results[3,:] * args.reserve_req)) # total_new_gt_cap
+    results[9]  = np.around(np.sum(gen_batt_capacity_results[3,:] * args.reserve_req)) # total_new_gt_cap
     results[10] = np.around(np.sum(gen_batt_capacity_results[4,:])) # total_battery_cap
     results[11] = np.around(np.sum(gen_batt_capacity_results[5,:])) # total_battery_power
     results[12] = np.around(np.sum(gen_batt_capacity_results[6,:])) # total_h2_cap
@@ -314,16 +342,16 @@ def raw_results_retrieval(args, model_config, m, tx_tuple_list):
     results[45] = np.around(gen_batt_capacity_results[7, 1]) # h2_power_2
     results[46] = np.around(gen_batt_capacity_results[7, 2]) # h2_power_3
     results[47] = np.around(gen_batt_capacity_results[7, 3]) # h2_power_4
-    results[48] = np.around(np.mean(timeseries_results[7, j, 0])) # h2_discharge_1
-    results[49] = np.around(np.mean(timeseries_results[7, j, 1])) # h2_discharge_2
-    results[50] = np.around(np.mean(timeseries_results[7, j, 2])) # h2_discharge_3
-    results[51] = np.around(np.mean(timeseries_results[7, j, 3])) # h2_discharge_4
+    results[48] = np.around(np.mean(timeseries_results[7, :, 0])) # h2_discharge_1
+    results[49] = np.around(np.mean(timeseries_results[7, :, 1])) # h2_discharge_2
+    results[50] = np.around(np.mean(timeseries_results[7, :, 2])) # h2_discharge_3
+    results[51] = np.around(np.mean(timeseries_results[7, :, 3])) # h2_discharge_4
 
     # Avg. Imports from HQ
-    results[52] = np.around(np.mean(timeseries_results[10, j, 0])) # hq_import_1
-    results[53] = np.around(np.mean(timeseries_results[10, j, 1])) # hq_import_2
-    results[54] = np.around(np.mean(timeseries_results[10, j, 2])) # hq_import_3
-    results[55] = np.around(np.mean(timeseries_results[10, j, 3])) # hq_import_4
+    results[52] = np.around(np.mean(timeseries_results[10, :, 0])) # hq_import_1
+    results[53] = np.around(np.mean(timeseries_results[10, :, 1])) # hq_import_2
+    results[54] = np.around(np.mean(timeseries_results[10, :, 2])) # hq_import_3
+    results[55] = np.around(np.mean(timeseries_results[10, :, 3])) # hq_import_4
 
     # Total transmission capacity: WE results presented first, EW results follow
     results[56] = np.around(tx_total_cap_results[0]) # new_trans_12
@@ -349,10 +377,14 @@ def full_results_processing(args, results, results_ts):
     lct = results[:, 0]
 
     # Potential generation time-series for curtailment calcs
-    baseline_demand_hourly_mw = np.load(os.path.join(args.data_dir, 'baseline_demand_hourly_mw.npy'))
-    onshore_pot_hourly = np.load(os.path.join(args.data_dir, 'onshore_pot_hourly.npy'))
-    offshore_pot_hourly = np.load(os.path.join(args.data_dir, 'offshore_pot_hourly.npy'))
-    solar_pot_hourly = np.load(os.path.join(args.data_dir, 'solar_pot_hourly.npy'))
+    baseline_demand_hourly_mw = np.array(pd.read_csv(os.path.join(args.data_dir, 'baseline_demand_hourly_mw.csv'),
+                                                     index_col=0))
+    onshore_pot_hourly        = np.array(pd.read_csv(os.path.join(args.data_dir, 'onshore_power_hourly_norm.csv'),
+                                                     index_col= 0))
+    offshore_pot_hourly       = np.array(pd.read_csv(os.path.join(args.data_dir, 'offshore_power_hourly_norm.csv'),
+                                                     index_col=0))
+    solar_pot_hourly          = np.array(pd.read_csv(os.path.join(args.data_dir, 'solar_power_hourly_norm.csv'),
+                                                     index_col = 0))
 
 
     # Create arrays to store costs -- All costs are annual
@@ -384,16 +416,17 @@ def full_results_processing(args, results, results_ts):
     solar_uncurtailed_cf = np.mean(solar_pot_hourly, axis = 0)
 
     # Hydro, nuclear, and netload costs
-    total_annual_hydro_cost   = np.sum(args.hydro_gen_mw) * args.instate_hydro_cost_mwh * 8760
-    total_annual_nuclear_cost = int(args.nuclear_boolean) * np.sum(args.nuc_gen_mw) * args.instate_nuc_cost_mwh * 8760
+    total_annual_hydro_cost = np.sum([args.hydro_gen_mw[i] * args.instate_hydro_cost_mwh[i] for i in range(4)]) * 8760
+    total_annual_nuclear_cost = int(args.nuclear_boolean) * np.sum([args.nuc_gen_mw[i] * args.instate_nuc_cost_mwh[i]
+                                                                   for i in range(4)]) * 8760
 
     net_load_cost, net_load_ramping_cost = load_gt_ramping_costs(args, results, results_ts)
 
     # Calculate existing capacity and transmission cost
-    total_cap_market_cost = np.sum([args.cap_market_cost_mw_yr[k] * (args.gt_current_cap_mw[k] +
+    total_cap_market_cost = np.sum([args.cap_market_cost_mw_yr[k] * (args.existing_gt_cap_mw[k] +
                                                                 int(args.nuclear_boolean) * args.nuc_gen_mw[k] +
                                                                args.hydro_gen_mw[k]) for k in range(4)])
-    total_existing_trans_cost = np.sum([float(args.existing_trans_load_mwh[k]) * args.existing_trans_cost_mwh[k]
+    total_existing_trans_cost = np.sum([float(args.existing_load_mwh[k]) * args.existing_trans_cost_mwh[k]
                                         for k in range(3)])
     total_annual_supp_cost = total_existing_trans_cost + total_cap_market_cost
 
@@ -406,26 +439,40 @@ def full_results_processing(args, results, results_ts):
     # Calculate costs
     for i in range(results.shape[0]):
 
-        total_new_renew_gen_cost[i] = cap_ann * (results[i, 6] * float(args.onshore_cost_mw) +
-                                                 results[i, 7] * float(args.offshore_cost_mw) +
-                                                 results[i, 8] * float(args.solar_cost_mw))
+        total_new_renew_gen_cost[i] = (
+            results[i, 6]  * (cap_ann * float(args.onshore_cost_mw)   + float(args.onshore_fixed_om_cost_mwyr)) +
+            results[i, 7]  * (cap_ann * float(args.offshore_cost_mw)  + float(args.offshore_fixed_om_cost_mwyr)) +
+            results[i, 20] * (cap_ann * float(args.solar_cost_mw[0])  + float(args.solar_fixed_om_cost_mwyr)) +
+            results[i, 21] * (cap_ann * float(args.solar_cost_mw[1])  + float(args.solar_fixed_om_cost_mwyr)) +
+            results[i, 22] * (cap_ann * float(args.solar_cost_mw[2])  + float(args.solar_fixed_om_cost_mwyr)) +
+            results[i, 23] * (cap_ann * float(args.solar_cost_mw[3])  + float(args.solar_fixed_om_cost_mwyr)))
 
-        total_new_battery_cost[i]   = cap_battery * (results[i, 10] * float(args.battery_cost_mwh) +
-                                           results[i, 11] * float(args.battery_cost_mw) +
-                                           results[i, 12] * float(args.h2_cost_mwh) +
-                                           results[i, 13] * float(args.h2_cost_mw))
 
-        total_new_gt_cost[i] = cap_ann * args.reserve_req * (results[i, 24] * float(args.gt_cost_mw[0]) +
-                                          results[i, 25] * float(args.gt_cost_mw[1]) +
-                                          results[i, 26] * float(args.gt_cost_mw[2]) +
-                                          results[i, 27] * float(args.gt_cost_mw[3]))
+        total_new_battery_cost[i] = (
+            results[i, 10] *  cap_battery * float(args.battery_cost_mwh) +
+            results[i, 11] *  cap_battery * float(args.battery_cost_mw) +
+            results[i, 40] *  cap_battery * float(args.h2_cost_mwh[0]) +
+            results[i, 41] *  cap_battery * float(args.h2_cost_mwh[1]) +
+            results[i, 42] *  cap_battery * float(args.h2_cost_mwh[2]) +
+            results[i, 43] *  cap_battery * float(args.h2_cost_mwh[3]) +
+            results[i, 44] * (cap_battery * float(args.h2_cost_mw[0]) + float(args.h2_fixed_om_cost_mwyr)) +
+            results[i, 45] * (cap_battery * float(args.h2_cost_mw[1]) + float(args.h2_fixed_om_cost_mwyr)) +
+            results[i, 46] * (cap_battery * float(args.h2_cost_mw[2]) + float(args.h2_fixed_om_cost_mwyr)) +
+            results[i, 47] * (cap_battery * float(args.h2_cost_mw[3]) + float(args.h2_fixed_om_cost_mwyr)))
 
-        total_new_tx_cost[i] = cap_ann * ((results[i, 56] - tx_tuple_list[0][1]) * tx_tuple_list[0][2] +
-                                          (results[i, 57] - tx_tuple_list[2][1]) * tx_tuple_list[2][2] +
-                                          (results[i, 58] - tx_tuple_list[4][1]) * tx_tuple_list[4][2] +
-                                          (results[i, 59] - tx_tuple_list[1][1]) * tx_tuple_list[1][2] +
-                                          (results[i, 60] - tx_tuple_list[3][1]) * tx_tuple_list[3][2] +
-                                          (results[i, 61] - tx_tuple_list[5][1]) * tx_tuple_list[5][2])
+        total_new_gt_cost[i] = args.reserve_req * (
+            results[i, 24] * (cap_ann * float(args.new_gt_cost_mw[0]) + float(args.new_gt_fixed_om_cost_mwyr)) +
+            results[i, 25] * (cap_ann * float(args.new_gt_cost_mw[1]) + float(args.new_gt_fixed_om_cost_mwyr)) +
+            results[i, 26] * (cap_ann * float(args.new_gt_cost_mw[2]) + float(args.new_gt_fixed_om_cost_mwyr)) +
+            results[i, 27] * (cap_ann * float(args.new_gt_cost_mw[3]) + float(args.new_gt_fixed_om_cost_mwyr)))
+
+        total_new_tx_cost[i] = ((results[i, 56] - tx_tuple_list[0][1]) * tx_tuple_list[0][2] +
+                                (results[i, 57] - tx_tuple_list[2][1]) * tx_tuple_list[2][2] +
+                                (results[i, 58] - tx_tuple_list[4][1]) * tx_tuple_list[4][2] +
+                                (results[i, 59] - tx_tuple_list[1][1]) * tx_tuple_list[1][2] +
+                                (results[i, 60] - tx_tuple_list[3][1]) * tx_tuple_list[3][2] +
+                                (results[i, 61] - tx_tuple_list[5][1]) * tx_tuple_list[5][2])
+                                # Already annualized in tx_tuple_list
 
         total_gas_cost[i]         = net_load_cost[i] / args.num_years
         total_ramping_cost[i]     = net_load_ramping_cost[i] / args.num_years
@@ -478,7 +525,7 @@ def full_results_processing(args, results, results_ts):
     data_for_export[:, 7] = fixed_charging_binary # EV fixed charging
     data_for_export[:, 8] = args.ev_charging_hours # EV charging hours
 
-    data_for_export[:, 9] = results[:, 6] # Onshore [MW]
+    data_for_export[:, 9]  = results[:, 6] # Onshore [MW]
     data_for_export[:, 10] = results[:, 7] # Offshore [MW]
     data_for_export[:, 11] = results[:, 8] # Solar [MW]
     data_for_export[:, 12] = results[:, 9] # New GT [MW]

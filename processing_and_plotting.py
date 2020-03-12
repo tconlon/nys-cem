@@ -29,7 +29,6 @@ def slice_data(results):
 
     return results
 
-
 def plotting(results):
 
     fig, ax = plt.subplots()

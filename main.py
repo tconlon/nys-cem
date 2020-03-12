@@ -13,8 +13,8 @@ if __name__ == '__main__':
 
     # 0: LCT + Elec. specified, GHG returned
     if model_config == 0:
-        perc_elec_load = [0.2, 0.4, 0.6, 0.8] #, .389, .550, .849, .944, 1]
-        lowc_targets   = [0.8] * 4 #, 1, 1, .7, 1, .947]
+        perc_elec_load = [0.3] #[[0]0.389, 0.389, 0.550]
+        lowc_targets   = [0.7] #, 1, 1]
         ghg_targets    = [np.nan]*len(perc_elec_load) # indeterminate
 
     # 1: LCT + GHG specified, Elec. returned

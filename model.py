@@ -7,43 +7,76 @@ def create_model(args, model_config, elec, lct, ghg):
 
     # Set up model parameters
     m = Model("capacity_optimization_renewable_targets")
-    T = args.num_years*8760
+    T = args.num_years*8760 + ((args.num_years+2)//4)*24 ## Account for leap years starting in 2008
     trange = range(T)
 
     nuclear_boolean = args.nuclear_boolean
     h2_boolean      = args.h2_boolean
 
     # Load in time-series data
-    baseline_demand, heating_pot, onshore_wind_pot, offshore_wind_pot, solar_pot, \
+    baseline_demand, heating_demand, heating_pot, onshore_wind_pot, offshore_wind_pot, solar_pot, \
     fixed_hydro_mw, flex_hydro_daily_mwh = load_timeseries(args)
 
+    # print('Demand')
+    # print(np.mean(baseline_demand, axis = 0))
+    # print('Heating')
+    # print(np.mean(heating_pot, axis=0)*7308)
+    # print('onshore')
+    # print(np.mean(onshore_wind_pot, axis=0))
+    # print('offshore')
+    # print(np.mean(offshore_wind_pot, axis=0))
+    # print('solar')
+    # print(np.mean(solar_pot, axis=0))
+    # print('fixed')
+    # print(np.mean(fixed_hydro_mw, axis=0))
+    # print('flex')
+    # print(np.mean(flex_hydro_daily_mwh, axis=0))
+
     # Load in emissions information
-    elec_emissions_rate, total_heating_emissions, total_transport_emissions, baseline_1990_emissions, \
+    nat_gas_emissions_rate, total_heating_emissions, total_transport_emissions, baseline_1990_emissions, \
     existing_industrial_emissions, non_diesel_non_gas_transport_emissions = calculate_ghg_contributions()
 
-    # Annualize capacity costs for model
-    onshore_cap_cost  = args.num_years * annualization_rate(args.i_rate, args.annualize_years_cap) * \
-                        float(args.onshore_cost_mw)
-    offshore_cap_cost = args.num_years * annualization_rate(args.i_rate, args.annualize_years_cap) * \
-                        float(args.offshore_cost_mw)
-    solar_cap_cost    = args.num_years * annualization_rate(args.i_rate, args.annualize_years_cap) * \
-                        float(args.solar_cost_mw)
-    battery_cost_mwh  = args.num_years * annualization_rate(args.i_rate, args.annualize_years_storage) * \
-                        float(args.battery_cost_mwh)
+    # Annualize capacity costs for model, add to fixed O&M costs
+    onshore_cap_cost  = args.num_years * (annualization_rate(args.i_rate, args.annualize_years_cap) *
+                        float(args.onshore_cost_mw) + float(args.onshore_fixed_om_cost_mwyr))
+    offshore_cap_cost = args.num_years * (annualization_rate(args.i_rate, args.annualize_years_cap) *
+                        float(args.offshore_cost_mw) + float(args.offshore_fixed_om_cost_mwyr))
+    solar_cap_cost    = [args.num_years * (annualization_rate(args.i_rate, args.annualize_years_cap) *
+                        float(x) + float(args.solar_fixed_om_cost_mwyr)) for x in args.solar_cost_mw]
     battery_cost_mw   = args.num_years * annualization_rate(args.i_rate, args.annualize_years_storage) * \
                         float(args.battery_cost_mw)
-    h2_cost_mwh       = args.num_years * annualization_rate(args.i_rate, args.annualize_years_storage) * \
-                        float(args.h2_cost_mwh)
-    h2_cost_mw        = args.num_years * annualization_rate(args.i_rate, args.annualize_years_storage) * \
-                        float(args.h2_cost_mw)
-    gt_cost_mw        = [args.num_years * annualization_rate(args.i_rate, args.annualize_years_cap) *
-                         args.reserve_req * float(x) for x in args.gt_cost_mw]
+    battery_cost_mwh  = args.num_years * annualization_rate(args.i_rate, args.annualize_years_storage) * \
+                        float(args.battery_cost_mwh)
+    h2_cost_mw        = [args.num_years * (annualization_rate(args.i_rate, args.annualize_years_storage) *
+                                   float(x) + float(args.h2_fixed_om_cost_mwyr)) for x in args.h2_cost_mw]
+    h2_cost_mwh       = [args.num_years * annualization_rate(args.i_rate, args.annualize_years_storage) * \
+                        float(x) for x in args.h2_cost_mwh]
+    new_gt_cost_mw    = [args.num_years * args.reserve_req * (annualization_rate(args.i_rate, args.annualize_years_cap)
+                         * float(x) + float(args.new_gt_fixed_om_cost_mwyr)) for x in args.new_gt_cost_mw]
+
+
+    print('onshore')
+    print(onshore_cap_cost)
+    print('offshore')
+    print(offshore_cap_cost)
+    print('solar')
+    print(solar_cap_cost)
+    print('battery_mw')
+    print(battery_cost_mw)
+    print('battery_mwh')
+    print(battery_cost_mwh)
+    print('gt')
+    print(new_gt_cost_mw)
+
 
     # Load transmission cost and current capacity parameters
     tx_matrix_limits = pd.read_excel(os.path.join(args.data_dir, 'transmission_matrix_limits.xlsx'),
                                      header=0, index_col=0)
-    tx_matrix_costs = pd.read_excel(os.path.join(args.data_dir, 'transmission_matrix_costs.xlsx'),
+    tx_matrix_cap_costs = pd.read_excel(os.path.join(args.data_dir, 'transmission_matrix_capacity_costs.xlsx'),
                                     header=0, index_col=0)
+    tx_matrix_om_costs = pd.read_excel(os.path.join(args.data_dir, 'transmission_matrix_o&m_costs.xlsx'),
+                                        header=0, index_col=0)
+
 
     ## Define and populate transmission dictionaries
     # Dictionary for transmission parameters
@@ -61,13 +94,13 @@ def create_model(args, model_config, elec, lct, ghg):
             if tx_matrix_limits.iloc[i, j] > 0:
                 tx_dict[base_tx_cap_string.format(i + 1, j + 1)] = (tx_matrix_limits.iloc[i, j],
                                                                     args.num_years *
-                                                                    annualization_rate(args.i_rate,
+                                                                    (annualization_rate(args.i_rate,
                                                                                        args.annualize_years_cap) *
-                                                                    tx_matrix_costs.iloc[i, j])
+                                                                    tx_matrix_cap_costs.iloc[i, j] +
+                                                                    tx_matrix_om_costs.iloc[i,j]))
 
-    # Initialize gas variables
-    gt_current_cap = [x / args.reserve_req for x in args.gt_current_cap_mw]
-    gt_diff_cost = args.gt_startup_cost_mw * 0.5  # start-up cost, multiply by 0.5 to change to start-up/shut-down
+
+    print(tx_dict)
 
     # Initialize nuclear generation constraint base on nuclear boolean
     nuc_gen_mw = [int(nuclear_boolean) * args.nuc_gen_mw[i] for i in range(4)]
@@ -96,14 +129,19 @@ def create_model(args, model_config, elec, lct, ghg):
         m.addConstr(ghg_target - ghg == 0)
 
     # Set up electrification variable
-    total_heating_cap = m.addVar(name='total_heating_cap', ub = args.heating_max_cap)
+    heating_max_cap = np.sum(np.mean(heating_demand, axis=0))
+    total_heating_cap = m.addVar(name='total_heating_cap', ub = heating_max_cap)
     total_ev_cap      = m.addVar(name='total_ev_cap', ub = args.ev_max_cap)
 
     if model_config == 0 or model_config == 2:
-        m.addConstr(total_heating_cap - elec * args.heating_max_cap == 0)
+        m.addConstr(total_heating_cap - elec * heating_max_cap == 0)
+        # m.addConstr(total_heating_cap == 0)
         m.addConstr(total_ev_cap      - elec * args.ev_max_cap  == 0)
+        # m.addConstr(total_ev_cap == 0)
+
+
     else: # Model determines amount of electrification, set proportion of heating to ev equal
-        m.addConstr(total_heating_cap/args.heating_max_cap - total_ev_cap/args.ev_max_cap == 0)
+        m.addConstr(total_heating_cap/heating_max_cap - total_ev_cap/args.ev_max_cap == 0)
 
 
     for i in range(0, args.num_regions):
@@ -129,13 +167,13 @@ def create_model(args, model_config, elec, lct, ghg):
         onshore_cap     = m.addVar(ub=args.onshore_wind_limit_mw[i], obj=onshore_cap_cost,
                                    name = 'onshore_cap_region_{}'.format(i + 1))
         offshore_cap    = m.addVar(obj=offshore_cap_cost, name = 'offshore_cap_region_{}'.format(i + 1))
-        solar_cap       = m.addVar(ub=float(args.solar_limit_mw[i]), obj=solar_cap_cost,
+        solar_cap       = m.addVar(ub=float(args.solar_limit_mw[i]), obj=solar_cap_cost[i],
                                    name='solar_cap_region_{}'.format(i + 1))
-        gt_cap          = m.addVar(obj=gt_cost_mw[i], name='new_gt_cap_region_{}'.format(i + 1))
+        new_gt_cap       = m.addVar(obj=new_gt_cost_mw[i], name='new_gt_cap_region_{}'.format(i + 1))
         battery_cap_mwh = m.addVar(obj=battery_cost_mwh, name = 'batt_energy_cap_region_{}'.format(i + 1))
         battery_cap_mw  = m.addVar(obj=battery_cost_mw, name = 'batt_power_cap_region_{}'.format(i + 1))
-        h2_cap_mwh      = m.addVar(obj=h2_cost_mwh, name = 'h2_energy_cap_region_{}'.format(i + 1))
-        h2_cap_mw       = m.addVar(obj=h2_cost_mw, name = 'h2_power_cap_region_{}'.format(i + 1))
+        h2_cap_mwh      = m.addVar(obj=h2_cost_mwh[i], name = 'h2_energy_cap_region_{}'.format(i + 1))
+        h2_cap_mw       = m.addVar(obj=h2_cost_mw[i], name = 'h2_power_cap_region_{}'.format(i + 1))
 
         # Initialize time-series variables
         flex_hydro_mw     = m.addVars(trange, ub=args.flex_hydro_cap_mw[i],
@@ -184,9 +222,29 @@ def create_model(args, model_config, elec, lct, ghg):
         ev_charging  = m.addVars(trange, name = 'ev_charging_region_{}'.format(i + 1))
 
         # Initialize netload variables
-        netload_diff = m.addVars(trange, lb=-GRB.INFINITY, name = "netload_diff_region_{}".format(i + 1))
-        netload_abs  = m.addVars(trange, obj=gt_diff_cost, name =  "netload_abs_region_{}".format(i + 1))
-        netload      = m.addVars(trange, obj=args.netload_cost_mwh[i], name="netload_region_{}".format(i + 1))
+        print('existing')
+        print(np.array(args.natgas_cost_mmbtu) * args.mmbtu_per_mwh/args.existing_gt_eff)
+        print('new')
+        print(np.array(args.natgas_cost_mmbtu) * args.mmbtu_per_mwh/args.new_gt_eff +
+                                                 args.new_gt_var_om_cost_mwh)
+
+
+        existing_gt_gen = m.addVars(trange, obj=args.natgas_cost_mmbtu[i] * args.mmbtu_per_mwh/args.existing_gt_eff,
+                                    ub = args.existing_gt_cap_mw[i]/args.reserve_req,
+                                    name="existing_gt_gen_region_{}".format(i + 1))
+        new_gt_gen      = m.addVars(trange, obj=(args.natgas_cost_mmbtu[i] * args.mmbtu_per_mwh/args.new_gt_eff +
+                                                 args.new_gt_var_om_cost_mwh),
+                                    name="new_gt_gen_region_{}".format(i + 1))
+
+        existing_gt_diff = m.addVars(trange, lb=-GRB.INFINITY, name="existing_gt_diff_region_{}".format(i + 1))
+        existing_gt_abs = m.addVars(trange, obj=args.gt_startup_cost_mw * 0.5,
+                                    name="existing_gt_abs_region_{}".format(i + 1))
+                            # start-up cost, multiply by 0.5 to change to start-up/shut-down
+
+        new_gt_diff = m.addVars(trange, lb=-GRB.INFINITY, name = "new_gt_diff_region_{}".format(i + 1))
+        new_gt_abs  = m.addVars(trange, obj=args.gt_startup_cost_mw * 0.5,
+                                name =  "new_gt_abs_region_{}".format(i + 1))
+                            # start-up cost, multiply by 0.5 to change to start-up/shut-down
 
         # Set up initial battery cap constraints
         batt_level[0] = battery_cap_mwh
@@ -225,7 +283,7 @@ def create_model(args, model_config, elec, lct, ghg):
                 m.addConstr((offshore_cap * offshore_wind_pot[j, i]) + (onshore_cap * onshore_wind_pot[j, i]) +
                             (solar_cap * solar_pot[j, i]) + flex_hydro_mw[j] -
                             ev_charging[j] - total_exports + (1 - args.trans_loss) * total_imports +
-                            hq_imports[j] + netload[j] >= baseline_demand[j, i]
+                            hq_imports[j] + existing_gt_gen[j] + new_gt_gen[j] >= baseline_demand[j, i]
                             + total_heating_cap * heating_pot[j, i]
                             - fixed_hydro_mw[j, i] - nuc_gen_mw[i])
 
@@ -235,7 +293,7 @@ def create_model(args, model_config, elec, lct, ghg):
                             (solar_cap * solar_pot[j, i]) + flex_hydro_mw[j] -
                             batt_charge[j] + batt_discharge[j] - h2_charge[j] + h2_discharge[j] -
                             ev_charging[j] - total_exports + (1 - args.trans_loss) * total_imports +
-                            hq_imports[j] + netload[j] >= baseline_demand[j, i]
+                            hq_imports[j] + existing_gt_gen[j] + new_gt_gen[j] >= baseline_demand[j, i]
                             + total_heating_cap * heating_pot[j, i]
                             - fixed_hydro_mw[j, i] - nuc_gen_mw[i])
 
@@ -257,13 +315,19 @@ def create_model(args, model_config, elec, lct, ghg):
                 m.addConstr(h2_discharge[j] - h2_cap_mw <= 0)
                 m.addConstr(h2_level[j] - h2_cap_mwh <= 0)
 
-                # Net load ramping constraints
-                m.addConstr(netload_diff[j] - (netload[j] - netload[j - 1]) == 0)
-                m.addConstr(netload_abs[j] >= netload_diff[j])
-                m.addConstr(netload_abs[j] >= -netload_diff[j])
+                # Gas turbine operation and ramping constraints
 
-            ## Net load constraints
-            m.addConstr(netload[j] - (gt_cap + gt_current_cap[i]) <= 0)
+
+                m.addConstr(existing_gt_diff[j] - (existing_gt_gen[j] - existing_gt_gen[j - 1]) == 0)
+                m.addConstr(existing_gt_abs[j] >= existing_gt_diff[j])
+                m.addConstr(existing_gt_abs[j] >= -existing_gt_diff[j])
+
+                m.addConstr(new_gt_gen[j] - new_gt_cap <= 0)
+                m.addConstr(new_gt_diff[j] - (new_gt_gen[j] - new_gt_gen[j - 1]) == 0)
+                m.addConstr(new_gt_abs[j] >= new_gt_diff[j])
+                m.addConstr(new_gt_abs[j] >= -new_gt_diff[j])
+
+
 
             ## EV charging constraint
             m.addConstr(ev_charging[i] - args.ev_load_dist[i] * total_ev_cap / float(args.ev_charging_p2e_ratio) <= 0)
@@ -298,10 +362,15 @@ def create_model(args, model_config, elec, lct, ghg):
     ## Initialize constraints for multi-region variables
 
     # Data structures for setting net load equal to a percent of the load
-    model_data_netload_region_1 = {}
-    model_data_netload_region_2 = {}
-    model_data_netload_region_3 = {}
-    model_data_netload_region_4 = {}
+    gt_existing_gen_region_1 = {}
+    gt_existing_gen_region_2 = {}
+    gt_existing_gen_region_3 = {}
+    gt_existing_gen_region_4 = {}
+
+    gt_new_gen_region_1 = {}
+    gt_new_gen_region_2 = {}
+    gt_new_gen_region_3 = {}
+    gt_new_gen_region_4 = {}
 
     # Data structure for setting offshore wind capacity equal to NREL limit,
     model_data_offshore_cap = {}
@@ -314,13 +383,18 @@ def create_model(args, model_config, elec, lct, ghg):
 
     for j in trange:
 
-        model_data_netload_region_1[j]    = m.getVarByName("netload_region_1[{}]".format(j))
-        model_data_netload_region_2[j]    = m.getVarByName("netload_region_2[{}]".format(j))
-        model_data_netload_region_3[j]    = m.getVarByName("netload_region_3[{}]".format(j))
-        model_data_netload_region_4[j]    = m.getVarByName("netload_region_4[{}]".format(j))
+        gt_existing_gen_region_1[j]  = m.getVarByName("existing_gt_gen_region_1[{}]".format(j))
+        gt_existing_gen_region_2[j]  = m.getVarByName("existing_gt_gen_region_2[{}]".format(j))
+        gt_existing_gen_region_3[j]  = m.getVarByName("existing_gt_gen_region_3[{}]".format(j))
+        gt_existing_gen_region_4[j]  = m.getVarByName("existing_gt_gen_region_4[{}]".format(j))
 
-        hq_import_region_1[j]             = m.getVarByName("hq_import_region_1[{}]".format(j))
-        hq_import_region_3[j]             = m.getVarByName("hq_import_region_3[{}]".format(j))
+        gt_new_gen_region_1[j] = m.getVarByName("new_gt_gen_region_1[{}]".format(j))
+        gt_new_gen_region_2[j] = m.getVarByName("new_gt_gen_region_2[{}]".format(j))
+        gt_new_gen_region_3[j] = m.getVarByName("new_gt_gen_region_3[{}]".format(j))
+        gt_new_gen_region_4[j] = m.getVarByName("new_gt_gen_region_4[{}]".format(j))
+
+        hq_import_region_1[j]  = m.getVarByName("hq_import_region_1[{}]".format(j))
+        hq_import_region_3[j]  = m.getVarByName("hq_import_region_3[{}]".format(j))
 
     m.update()
 
@@ -334,30 +408,35 @@ def create_model(args, model_config, elec, lct, ghg):
     m.addConstr((model_data_offshore_cap[2] + model_data_offshore_cap[3]) <= args.offshore_wind_limit_mw)
 
     # Low-carbon electricity constraint
-    full_netload_sum_mwh = quicksum(model_data_netload_region_1[j] + model_data_netload_region_2[j] +
-                                    model_data_netload_region_3[j] + model_data_netload_region_4[j] for j in trange)
+    full_existing_gt_sum_mwh = quicksum(gt_existing_gen_region_1[j] + gt_existing_gen_region_2[j] +
+                                        gt_existing_gen_region_3[j] + gt_existing_gen_region_4[j] for j in trange)
+    full_new_gt_sum_mwh      = quicksum(gt_new_gen_region_1[j] + gt_new_gen_region_2[j] +
+                                    gt_new_gen_region_3[j] + gt_new_gen_region_4[j] for j in trange)
+    full_netload_sum_mwh = full_existing_gt_sum_mwh + full_new_gt_sum_mwh
+
+
+
+
 
     full_demand_sum_mwh  = np.sum(baseline_demand[0:T]) + (total_heating_cap + total_ev_cap) * T
-
-
-
     full_imports_sum_mwh = quicksum(hq_import_region_1[j] + hq_import_region_3[j] for j in trange)
     full_nuclear_sum_mwh = np.sum(nuc_gen_mw) * T
-
-
 
     m.update()
 
     # Find total emissions -- all emission contributions below are annualized
 
-    elec_emissions = elec_emissions_rate * full_netload_sum_mwh / (args.num_years * 1e6) # MMtCO2e
-    heating_emissions = (1-total_heating_cap/args.heating_max_cap) * total_heating_emissions
+    elec_emissions = nat_gas_emissions_rate * args.mmbtu_per_mwh / 1000 * \
+                     (full_existing_gt_sum_mwh / args.existing_gt_eff + full_new_gt_sum_mwh / args.new_gt_eff) / \
+                     (args.num_years * 1e6)  # MMtCO2e
+
+    heating_emissions = (1-total_heating_cap/heating_max_cap) * total_heating_emissions
     transport_emissions = (1-total_ev_cap/args.ev_max_cap) * total_transport_emissions
     total_emissions = elec_emissions + heating_emissions + transport_emissions +  existing_industrial_emissions + \
                       non_diesel_non_gas_transport_emissions
+
     ghg_emission_reduction = m.addVar(name = 'ghg_emission_reduction')
     m.update()
-
     m.addConstr(ghg_emission_reduction - (baseline_1990_emissions - total_emissions)/baseline_1990_emissions == 0)
 
 
