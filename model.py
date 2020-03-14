@@ -14,7 +14,7 @@ def create_model(args, model_config, elec, lct, ghg):
     h2_boolean      = args.h2_boolean
 
     # Load in time-series data
-    baseline_demand, heating_demand, heating_pot, onshore_wind_pot, offshore_wind_pot, solar_pot, \
+    baseline_demand, heating_demand, onshore_wind_pot, offshore_wind_pot, solar_pot, \
     fixed_hydro_mw, flex_hydro_daily_mwh = load_timeseries(args)
 
     # print('Demand')
@@ -130,18 +130,19 @@ def create_model(args, model_config, elec, lct, ghg):
 
     # Set up electrification variable
     heating_max_cap = np.sum(np.mean(heating_demand, axis=0))
-    total_heating_cap = m.addVar(name='total_heating_cap', ub = heating_max_cap)
-    total_ev_cap      = m.addVar(name='total_ev_cap', ub = args.ev_max_cap)
+    # total_heating_cap = m.addVar(name='total_heating_cap', ub = heating_max_cap)
+    # total_ev_cap      = m.addVar(name='total_ev_cap', ub = args.ev_max_cap)
+
+    heating_elec_ratio = m.addVar(name='total_heating_ratio', ub=1)
+    ev_elec_ratio      = m.addVar(name='total_ev_ratio', ub=1)
 
     if model_config == 0 or model_config == 2:
-        m.addConstr(total_heating_cap - elec * heating_max_cap == 0)
-        # m.addConstr(total_heating_cap == 0)
-        m.addConstr(total_ev_cap      - elec * args.ev_max_cap  == 0)
-        # m.addConstr(total_ev_cap == 0)
+        m.addConstr(heating_elec_ratio - elec == 0)
+        m.addConstr(ev_elec_ratio - elec == 0)
 
 
     else: # Model determines amount of electrification, set proportion of heating to ev equal
-        m.addConstr(total_heating_cap/heating_max_cap - total_ev_cap/args.ev_max_cap == 0)
+        m.addConstr(heating_elec_ratio - ev_elec_ratio== 0)
 
 
     for i in range(0, args.num_regions):
@@ -221,16 +222,10 @@ def create_model(args, model_config, elec, lct, ghg):
         h2_level     = m.addVars(trange, name = 'h2_level_region_{}'.format(i + 1))
         ev_charging  = m.addVars(trange, name = 'ev_charging_region_{}'.format(i + 1))
 
-        # Initialize netload variables
-        print('existing')
-        print(np.array(args.natgas_cost_mmbtu) * args.mmbtu_per_mwh/args.existing_gt_eff)
-        print('new')
-        print(np.array(args.natgas_cost_mmbtu) * args.mmbtu_per_mwh/args.new_gt_eff +
-                                                 args.new_gt_var_om_cost_mwh)
 
 
         existing_gt_gen = m.addVars(trange, obj=args.natgas_cost_mmbtu[i] * args.mmbtu_per_mwh/args.existing_gt_eff,
-                                    ub = args.existing_gt_cap_mw[i]/args.reserve_req,
+                                    ub = args.existing_gt_cap_mw[i]*10/args.reserve_req,
                                     name="existing_gt_gen_region_{}".format(i + 1))
         new_gt_gen      = m.addVars(trange, obj=(args.natgas_cost_mmbtu[i] * args.mmbtu_per_mwh/args.new_gt_eff +
                                                  args.new_gt_var_om_cost_mwh),
@@ -284,7 +279,7 @@ def create_model(args, model_config, elec, lct, ghg):
                             (solar_cap * solar_pot[j, i]) + flex_hydro_mw[j] -
                             ev_charging[j] - total_exports + (1 - args.trans_loss) * total_imports +
                             hq_imports[j] + existing_gt_gen[j] + new_gt_gen[j] >= baseline_demand[j, i]
-                            + total_heating_cap * heating_pot[j, i]
+                            + heating_elec_ratio * heating_demand[j, i]
                             - fixed_hydro_mw[j, i] - nuc_gen_mw[i])
 
             else:
@@ -294,7 +289,7 @@ def create_model(args, model_config, elec, lct, ghg):
                             batt_charge[j] + batt_discharge[j] - h2_charge[j] + h2_discharge[j] -
                             ev_charging[j] - total_exports + (1 - args.trans_loss) * total_imports +
                             hq_imports[j] + existing_gt_gen[j] + new_gt_gen[j] >= baseline_demand[j, i]
-                            + total_heating_cap * heating_pot[j, i]
+                            + heating_elec_ratio * heating_demand[j, i]
                             - fixed_hydro_mw[j, i] - nuc_gen_mw[i])
 
                 # Battery/H2 energy conservation constraints
@@ -330,7 +325,8 @@ def create_model(args, model_config, elec, lct, ghg):
 
 
             ## EV charging constraint
-            m.addConstr(ev_charging[i] - args.ev_load_dist[i] * total_ev_cap / float(args.ev_charging_p2e_ratio) <= 0)
+            m.addConstr(ev_charging[i] - args.ev_load_dist[i] * ev_elec_ratio * args.ev_max_cap / \
+                        float(args.ev_charging_p2e_ratio) <= 0)
 
 
             # Add constraints for new HQ imports into NYC -- This is to ensure constant flow of power
@@ -348,11 +344,11 @@ def create_model(args, model_config, elec, lct, ghg):
 
             if args.ev_charging_method == 'flexible':
                 m.addConstr(quicksum(ev_charging[args.ev_hours_start + k] for k in jrange_ev) == args.ev_load_dist[i] *
-                            total_ev_cap * 24)
+                            ev_elec_ratio * args.ev_max_cap * 24)
             elif args.ev_charging_method == 'fixed':
                 for k in jrange_ev:
                     m.addConstr(ev_charging[args.ev_hours_start + k]  == args.ev_load_dist[i] *
-                                total_ev_cap * 24/args.ev_charging_hours)
+                            ev_elec_ratio * args.ev_max_cap * 24/args.ev_charging_hours)
             else:
                 print('Invalid EV charging method')
 
@@ -416,9 +412,9 @@ def create_model(args, model_config, elec, lct, ghg):
 
 
 
+    full_demand_sum_mwh  = np.sum(baseline_demand[0:T]) + heating_elec_ratio * np.sum(heating_demand[0:T]) + \
+                               (ev_elec_ratio * args.ev_max_cap) * T
 
-
-    full_demand_sum_mwh  = np.sum(baseline_demand[0:T]) + (total_heating_cap + total_ev_cap) * T
     full_imports_sum_mwh = quicksum(hq_import_region_1[j] + hq_import_region_3[j] for j in trange)
     full_nuclear_sum_mwh = np.sum(nuc_gen_mw) * T
 
@@ -430,8 +426,8 @@ def create_model(args, model_config, elec, lct, ghg):
                      (full_existing_gt_sum_mwh / args.existing_gt_eff + full_new_gt_sum_mwh / args.new_gt_eff) / \
                      (args.num_years * 1e6)  # MMtCO2e
 
-    heating_emissions = (1-total_heating_cap/heating_max_cap) * total_heating_emissions
-    transport_emissions = (1-total_ev_cap/args.ev_max_cap) * total_transport_emissions
+    heating_emissions = (1-heating_elec_ratio) * total_heating_emissions
+    transport_emissions = (1-ev_elec_ratio) * total_transport_emissions
     total_emissions = elec_emissions + heating_emissions + transport_emissions +  existing_industrial_emissions + \
                       non_diesel_non_gas_transport_emissions
 
@@ -440,8 +436,7 @@ def create_model(args, model_config, elec, lct, ghg):
     m.addConstr(ghg_emission_reduction - (baseline_1990_emissions - total_emissions)/baseline_1990_emissions == 0)
 
 
-
-    ## Constrain LCT
+    # Constrain LCT
     # LCT predetermined
     if model_config == 0 or model_config == 1:
         frac_netload = 1 - lowc_target

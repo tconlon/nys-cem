@@ -43,11 +43,9 @@ def load_timeseries(args):
                                                      index_col=0))[0:T]
     heating_hourly            = np.array(pd.read_csv(os.path.join(args.data_dir, 'elec_heating_hourly_mw.csv'),
                                                      index_col=0))[0:T]
-    heating_pot_hourly        = heating_hourly / (np.sum(np.mean(heating_hourly[0:T], axis = 0)))
 
 
-
-    return baseline_demand_hourly_mw, heating_hourly, heating_pot_hourly, onshore_pot_hourly, offshore_pot_hourly, \
+    return baseline_demand_hourly_mw, heating_hourly, onshore_pot_hourly, offshore_pot_hourly, \
            solar_pot_hourly, fixed_hydro_hourly_mw, flex_hydro_daily_mwh
 
 
@@ -170,17 +168,22 @@ def calculate_ghg_contributions():
 
 
 def raw_results_retrieval(args, model_config, m, tx_tuple_list):
-    T = args.num_years * 8760
+    T = args.num_years * 8760 + ((args.num_years + 2) // 4) * 24  ## Account for leap years starting in 2008
 
     # Model run parameters
-    total_heating_cap = m.getVarByName('total_heating_cap').X
-    total_ev_cap = m.getVarByName('total_ev_cap').X
+
 
     nuclear_boolean = args.nuclear_boolean
     h2_boolean = args.h2_boolean
 
-    baseline_demand_hourly_mw, heating_demand, heating_pot_hourly, onshore_pot_hourly, offshore_pot_hourly, \
+    baseline_demand_hourly_mw, heating_demand, onshore_pot_hourly, offshore_pot_hourly, \
     solar_pot_hourly, fixed_hydro_hourly_mw, flex_hydro_daily_mwh = load_timeseries(args)
+
+    heating_elec_ratio = m.getVarByName('total_heating_ratio').X
+    ev_elec_ratio      = m.getVarByName('total_ev_ratio').X
+
+    total_heating_cap = heating_elec_ratio * np.sum(np.mean(heating_demand[0:T], axis = 0))
+    total_ev_cap      = ev_elec_ratio * args.ev_max_cap
 
     gen_batt_capacity_results = np.zeros((8, args.num_regions))
     for i in range(args.num_regions):
@@ -251,7 +254,7 @@ def raw_results_retrieval(args, model_config, m, tx_tuple_list):
     results_ts[:, args.num_regions * 1: args.num_regions * 2] = \
         solar_pot_hourly[0:T] * gen_batt_capacity_results[2, :]  # Uncurtailed solar gen
     results_ts[:, args.num_regions * 2: args.num_regions * 3] = baseline_demand_hourly_mw[0:T]  # baseline demand
-    results_ts[:, args.num_regions * 3: args.num_regions * 4] = total_heating_cap * heating_pot_hourly[0:T]  # heating
+    results_ts[:, args.num_regions * 3: args.num_regions * 4] = heating_elec_ratio * heating_demand[0:T]  # heating
     results_ts[:, args.num_regions * 4: args.num_regions * 5] = timeseries_results[14]  # ev charging
     results_ts[:, args.num_regions * 5: args.num_regions * 6] = timeseries_results[11]  # existing GT generation
     results_ts[:, args.num_regions * 6: args.num_regions * 7] = timeseries_results[12]  # new GT generation
