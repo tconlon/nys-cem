@@ -17,6 +17,9 @@ def create_model(args, model_config, elec, lct, ghg):
     baseline_demand, heating_demand, onshore_wind_pot, offshore_wind_pot, solar_pot, \
     fixed_hydro_mw, flex_hydro_daily_mwh = load_timeseries(args)
 
+    print(np.sum(np.mean(heating_demand, axis=0)))
+    print(np.sum(np.mean(baseline_demand, axis=0)))
+
     # print('Demand')
     # print(np.mean(baseline_demand, axis = 0))
     # print('Heating')
@@ -55,18 +58,18 @@ def create_model(args, model_config, elec, lct, ghg):
                          * float(x) + float(args.new_gt_fixed_om_cost_mwyr)) for x in args.new_gt_cost_mw]
 
 
-    print('onshore')
-    print(onshore_cap_cost)
-    print('offshore')
-    print(offshore_cap_cost)
-    print('solar')
-    print(solar_cap_cost)
-    print('battery_mw')
-    print(battery_cost_mw)
-    print('battery_mwh')
-    print(battery_cost_mwh)
-    print('gt')
-    print(new_gt_cost_mw)
+    # print('onshore')
+    # print(onshore_cap_cost)
+    # print('offshore')
+    # print(offshore_cap_cost)
+    # print('solar')
+    # print(solar_cap_cost)
+    # print('battery_mw')
+    # print(battery_cost_mw)
+    # print('battery_mwh')
+    # print(battery_cost_mwh)
+    # print('gt')
+    # print(new_gt_cost_mw)
 
 
     # Load transmission cost and current capacity parameters
@@ -98,9 +101,6 @@ def create_model(args, model_config, elec, lct, ghg):
                                                                                        args.annualize_years_cap) *
                                                                     tx_matrix_cap_costs.iloc[i, j] +
                                                                     tx_matrix_om_costs.iloc[i,j]))
-
-
-    print(tx_dict)
 
     # Initialize nuclear generation constraint base on nuclear boolean
     nuc_gen_mw = [int(nuclear_boolean) * args.nuc_gen_mw[i] for i in range(4)]
@@ -225,7 +225,7 @@ def create_model(args, model_config, elec, lct, ghg):
 
 
         existing_gt_gen = m.addVars(trange, obj=args.natgas_cost_mmbtu[i] * args.mmbtu_per_mwh/args.existing_gt_eff,
-                                    ub = args.existing_gt_cap_mw[i]*10/args.reserve_req,
+                                    ub = args.existing_gt_cap_mw[i]/args.reserve_req,
                                     name="existing_gt_gen_region_{}".format(i + 1))
         new_gt_gen      = m.addVars(trange, obj=(args.natgas_cost_mmbtu[i] * args.mmbtu_per_mwh/args.new_gt_eff +
                                                  args.new_gt_var_om_cost_mwh),

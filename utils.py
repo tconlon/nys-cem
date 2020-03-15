@@ -45,6 +45,14 @@ def load_timeseries(args):
                                                      index_col=0))[0:T]
 
 
+
+    # baseline_demand_hourly_mw = baseline_demand_hourly_mw * 18655.32846356066 / (7307.89286986277 + 18655.32846356066)
+
+    #
+    # heating_hourly = heating_hourly * 18655.32846356066 / \
+    #                             (7307.89286986277 + 18655.32846356066)
+
+
     return baseline_demand_hourly_mw, heating_hourly, onshore_pot_hourly, offshore_pot_hourly, \
            solar_pot_hourly, fixed_hydro_hourly_mw, flex_hydro_daily_mwh
 
@@ -380,14 +388,9 @@ def full_results_processing(args, results, results_ts):
     lct = results[:, 0]
 
     # Potential generation time-series for curtailment calcs
-    baseline_demand_hourly_mw = np.array(pd.read_csv(os.path.join(args.data_dir, 'baseline_demand_hourly_mw.csv'),
-                                                     index_col=0))
-    onshore_pot_hourly        = np.array(pd.read_csv(os.path.join(args.data_dir, 'onshore_power_hourly_norm.csv'),
-                                                     index_col= 0))
-    offshore_pot_hourly       = np.array(pd.read_csv(os.path.join(args.data_dir, 'offshore_power_hourly_norm.csv'),
-                                                     index_col=0))
-    solar_pot_hourly          = np.array(pd.read_csv(os.path.join(args.data_dir, 'solar_power_hourly_norm.csv'),
-                                                     index_col = 0))
+
+    baseline_demand_hourly_mw, heating_hourly, onshore_pot_hourly, offshore_pot_hourly, \
+    solar_pot_hourly, fixed_hydro_hourly_mw, flex_hydro_daily_mwh = load_timeseries(args)
 
 
     # Create arrays to store costs -- All costs are annual

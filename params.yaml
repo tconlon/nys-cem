@@ -6,9 +6,10 @@ data_dir: '../data_uploads'
 results_dir: '../model_results'
 nuclear_boolean: False
 h2_boolean: False
+solve_model: True
 
 # General model assumptions
-num_years: 1
+num_years: 6
 num_regions: 4
 i_rate: 0.05
 annualize_years_cap: 20
@@ -65,7 +66,7 @@ ev_hours_start: 19
 ev_charging_hours: 12
 ev_charging_method: 'flexible' # or fixed
 ev_load_dist: [0.370449679, 0.177730193, 0.243040685, 0.208779443]
-ev_max_cap: 6660
+ev_max_cap: 0 #6660
 
 # Other various assumptions
 trans_loss: 0.03
@@ -73,7 +74,6 @@ reserve_req: 1.17
 hqch_capacity_factor: 0.9
 new_gt_eff: 0.399
 existing_gt_eff: 0.419
-
 
 # Existing capacity and transmission cost assumptions
 cap_market_cost_mw_yr: [27640, 27640, 104600, 104600]  # $/MW-yr
