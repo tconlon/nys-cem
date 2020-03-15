@@ -9,7 +9,7 @@ h2_boolean: False
 solve_model: True
 
 # General model assumptions
-num_years: 6
+num_years: 1
 num_regions: 4
 i_rate: 0.05
 annualize_years_cap: 20
@@ -66,7 +66,7 @@ ev_hours_start: 19
 ev_charging_hours: 12
 ev_charging_method: 'flexible' # or fixed
 ev_load_dist: [0.370449679, 0.177730193, 0.243040685, 0.208779443]
-ev_max_cap: 0 #6660
+ev_max_cap: 6660
 
 # Other various assumptions
 trans_loss: 0.03

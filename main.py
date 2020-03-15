@@ -13,8 +13,8 @@ if __name__ == '__main__':
 
     # 0: LCT + Elec. specified, GHG returned
     if model_config == 0:
-        perc_elec_load = [0, 0] #[1, 1, 1, 1, 1, 1] #[[0]0.389, 0.389, 0.550]
-        lowc_targets   = [0.7, 0.9]#[0.95, 0.98, 0.99, 0.995, 0.999, 1] #, 1, 1]
+        perc_elec_load = [0.4] #[1, 1, 1, 1, 1, 1] #[[0]0.389, 0.389, 0.550]
+        lowc_targets   = [0.7]#[0.95, 0.98, 0.99, 0.995, 0.999, 1] #, 1, 1]
         ghg_targets    = [np.nan]*len(perc_elec_load) # indeterminate
 
     # 1: LCT + GHG specified, Elec. returned
@@ -96,4 +96,4 @@ if __name__ == '__main__':
 
 
     df_results_processed = full_results_processing(args, np.array(results), np.array(results_ts))
-    df_results_processed.to_excel(os.path.join(args.results_dir, 'processed_results_export_test.xlsx'))
+    df_results_processed.to_excel(os.path.join(args.results_dir, 'processed_results_export.xlsx'))
