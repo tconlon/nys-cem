@@ -573,9 +573,7 @@ def full_results_processing(args, results, results_ts):
     data_for_export[:, 23] = total_renewable_gen  # Average uncurtailed renewable gen
 
 
-    ## This is where I inserted
-
-    data_for_export[:, 24] = total_renewable_curtailment  # Curtailment
+    data_for_export[:, 24] = total_curtailment_from_slack  # Curtailment
     data_for_export[:, 25] = [total_new_wind_solar_cost[i] / (avg_total_demand[i] * 8760)
                               for i in range(results.shape[0])] # Renewable generation capacity cost
     data_for_export[:, 26] = [total_new_battery_cost[i] / (avg_total_demand[i] * 8760)
