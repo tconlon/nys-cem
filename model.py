@@ -3,7 +3,7 @@ from gurobipy import *
 from utils import annualization_rate, load_timeseries, calculate_ghg_contributions
 import pandas as pd
 
-def create_model(args, model_config, elec, lct, ghg):
+def create_model(args, model_config, lct, elec, ghg):
 
     # Set up model parameters
     m = Model("capacity_optimization_renewable_targets")
@@ -17,8 +17,8 @@ def create_model(args, model_config, elec, lct, ghg):
     baseline_demand, heating_demand, onshore_wind_pot, offshore_wind_pot, solar_pot, \
     fixed_hydro_mw, flex_hydro_daily_mwh = load_timeseries(args)
 
-    print(np.sum(np.mean(heating_demand, axis=0)))
-    print(np.sum(np.mean(baseline_demand, axis=0)))
+    # print(np.sum(np.mean(heating_demand, axis=0)))
+    # print(np.sum(np.mean(baseline_demand, axis=0)))
 
     # print('Demand')
     # print(np.mean(baseline_demand, axis = 0))
@@ -188,10 +188,10 @@ def create_model(args, model_config, elec, lct, ghg):
         # Create transmission time series and total export/import capacity variables
         for export_region in tx_export_regions_set:
             # Time series variable, must set lowerbound to -Infinity since we are allowing 'negative' flow
-            tx_export_vars = m.addVars(trange, name= 'net_exports_ts_{}_to_{}'.format(i + 1, export_region),
-                                       lb = 0)
-            tx_import_vars = m.addVars(trange, name= 'net_exports_ts_{}_to_{}'.format(export_region, i + 1),
-                                       lb = 0)
+            tx_export_vars = m.addVars(trange, obj = args.nominal_trans_cost_mwh,
+                                       name= 'net_exports_ts_{}_to_{}'.format(i + 1, export_region), lb = 0)
+            tx_import_vars = m.addVars(trange, obj = args.nominal_trans_cost_mwh,
+                                       name= 'net_exports_ts_{}_to_{}'.format(export_region, i + 1), lb = 0)
 
             # Export cap is = new cap + existing cap (from dictionary)
             tx_export_cap  = m.getVarByName("new_export_limits_{}_{}".format(i + 1, export_region)) + \
@@ -280,7 +280,8 @@ def create_model(args, model_config, elec, lct, ghg):
                             ev_charging[j] - total_exports + (1 - args.trans_loss) * total_imports +
                             hq_imports[j] + existing_gt_gen[j] + new_gt_gen[j] >= baseline_demand[j, i]
                             + heating_elec_ratio * heating_demand[j, i]
-                            - fixed_hydro_mw[j, i] - nuc_gen_mw[i])
+                            - fixed_hydro_mw[j, i] - nuc_gen_mw[i],
+                            name= 'energy_balance_constraint_region_{}[{}]'.format(i+1, j))
 
             else:
                 # Load constraint: Add battery constraints for all other times series
@@ -290,7 +291,8 @@ def create_model(args, model_config, elec, lct, ghg):
                             ev_charging[j] - total_exports + (1 - args.trans_loss) * total_imports +
                             hq_imports[j] + existing_gt_gen[j] + new_gt_gen[j] >= baseline_demand[j, i]
                             + heating_elec_ratio * heating_demand[j, i]
-                            - fixed_hydro_mw[j, i] - nuc_gen_mw[i])
+                            - fixed_hydro_mw[j, i] - nuc_gen_mw[i],
+                            name='energy_balance_constraint_region_{}[{}]'.format(i + 1, j))
 
                 # Battery/H2 energy conservation constraints
                 m.addConstr(batt_discharge[j] / args.battery_eff - args.battery_eff * batt_charge[j] ==
@@ -325,7 +327,7 @@ def create_model(args, model_config, elec, lct, ghg):
 
 
             ## EV charging constraint
-            m.addConstr(ev_charging[i] - args.ev_load_dist[i] * ev_elec_ratio * args.ev_max_cap / \
+            m.addConstr(ev_charging[j] - args.ev_load_dist[i] * ev_elec_ratio * args.ev_max_cap / \
                         float(args.ev_charging_p2e_ratio) <= 0)
 
 

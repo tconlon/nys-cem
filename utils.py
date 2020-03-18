@@ -86,7 +86,8 @@ def get_raw_columns():
                   'h2_level_1','h2_level_2','h2_level_3','h2_level_4',
                   'hq_import_1', 'hq_import_2', 'hq_import_3', 'hq_import_4',
                   'flex_hydro_1','flex_hydro_2','flex_hydro_3','flex_hydro_4',
-                  'trans_12', 'trans_23', 'trans_34', '', 'trans_21', 'trans_32', 'trans_43', '']
+                  'trans_12', 'trans_23', 'trans_34', '', 'trans_21', 'trans_32', 'trans_43', '',
+                  'curtailed_gen_1', 'curtailed_gen_2', 'curtailed_gen_3', 'curtailed_gen_4']
 
     return  columns, ts_columns
 
@@ -96,11 +97,15 @@ def get_processed_columns():
 
     # Define columns for processed results export
 
-    columns = ['RGT/LCT', 'RGT Binary', 'Nuclear Binary', 'H2 Binary', 'HQ-CH Addl. Cap.', 'Heating Load', 'EV Load',
+    columns = ['RGT/LCT', 'RGT Binary', 'Nuclear Binary', 'H2 Binary', 'HQ-CH Addl. Cap.', 'Heating Load [MW]',
+               'EV Load [MW]',
                'EV Fixed Charging', 'Charging Hours', 'Onshore [MW]', 'Offshore [MW]', 'Solar [MW]', 'New GT [MW]',
                'Battery Energy [MWh]', 'Battery Power [MW]', 'H2 Energy [MWh]', 'H2 Power [MW]', 'New Trans. [MW]',
-               'New Trans. [GW-Mi]', 'Avg. Existing HQ Imports [MW]', 'Avg. New HQ Imports [MW]', 'Curtailment',
-               'Renew. Gen. Cost [$/MWh]', 'Battery Cost [$/MWh]', 'New GT Cost [$/MWh]', 'New Trans. Cost [$/MWh]',
+               'New Trans. [GW-Mi]', 'Avg. Existing HQ Imports [MW]', 'Avg. New HQ Imports [MW]', 'Peak Demand [MW]',
+               'Uncurtailed Avg. Wind and Solar Gen. [MW]', 'Uncurtailed Renewable Gen. [MW]',
+               'Renewable Gen. Curtailment',
+               'Wind and Solar Gen. Cost [$/MWh]', 'Battery Cost [$/MWh]', 'New GT Cost [$/MWh]',
+               'New Trans. Cost [$/MWh]',
                'Gas Fuel Cost [$/MWh]', 'Gas Ramping Cost [$/MWh]', 'Exist. Trans. + Cap. Cost  [$/MWh]',
                'Exist. Hydro Gen Cost [$/MWh]', 'Import Cost [$/MWh]', 'Nuc. Gen. Cost [$/MWh]', 'Total LCOE [$/MWh]',
                'GHG Reduction']
@@ -164,8 +169,6 @@ def calculate_ghg_contributions():
     non_diesel_non_gas_transport_emissions = 13.51
 
     nat_gas_emissions_rate = 53.1148 # kg CO2e/MMBTU
-    # heat_rate = 3.412/nat_gas_efficiency # MMBTU/MWh
-    # elec_emissions_rate = nat_gas_emissions_rate * heat_rate / 1000 # MtCO2e/MWh
 
     total_heating_emissions = 56.5 # MMtCO2e
     total_transport_emissions = 61.17 # MMtCO2e
@@ -210,7 +213,8 @@ def raw_results_retrieval(args, model_config, m, tx_tuple_list):
         for j in range(T):
             # timeseries_results[0, j, i]  = m.getVarByName('onshore_wind_util_region_{}[{}]'.format(i + 1, j)).X
             # timeseries_results[1, j, i]  = m.getVarByName('offshore_wind_util_region_{}[{}]'.format(i + 1, j)).X
-            # timeseries_results[2, j, i]  = m.getVarByName('solar_util_region_{}[{}]'.format(i + 1, j)).X
+            timeseries_results[2, j, i]  = m.getConstrByName('energy_balance_constraint_region_{}[{}]'
+                                                             .format(i + 1, j)).Slack
             timeseries_results[3, j, i]  = m.getVarByName('flex_hydro_region_{}[{}]'.format(i + 1, j)).X
             timeseries_results[4, j, i]  = m.getVarByName('batt_charge_region_{}[{}]'.format(i + 1, j)).X
             timeseries_results[5, j, i]  = m.getVarByName('batt_discharge_region_{}[{}]'.format(i + 1, j)).X
@@ -254,7 +258,7 @@ def raw_results_retrieval(args, model_config, m, tx_tuple_list):
 
     ## Export raw results
     results = np.zeros(63)
-    results_ts = np.zeros((T, args.num_regions * 13))
+    results_ts = np.zeros((T, args.num_regions * 14))
 
     # Time series results
     results_ts[:, 0:2] = onshore_pot_hourly[0:T, 0:2] * gen_batt_capacity_results[0, 0:2]  # Uncurtailed onshore gen
@@ -274,15 +278,12 @@ def raw_results_retrieval(args, model_config, m, tx_tuple_list):
     results_ts[:, args.num_regions * 10: args.num_regions * 11] = timeseries_results[3]  # flex hydro
     results_ts[:, args.num_regions * 11: args.num_regions * 11 + 3] = tx_ts_results_WE  # WE transmission flow
     results_ts[:, args.num_regions * 12: args.num_regions * 12 + 3] = tx_ts_results_EW  # EW transmission flow
+    results_ts[:, args.num_regions * 13: args.num_regions * 14] = timeseries_results[2]  # EW transmission flow
 
     # Determine LCT
     if model_config == 0 or model_config == 1:
         lct = m.getVarByName('lowc_target').X
     else:
-        # print(np.sum(timeseries_results))
-        # print(np.sum(baseline_demand_hourly_mw[0:T]))
-        # print((total_heating_cap + total_ev_cap) * T)
-        # print(np.sum(baseline_demand_hourly_mw[0:T]))
 
         lct = np.round(1 - (np.sum(timeseries_results[11]) / (np.sum(baseline_demand_hourly_mw[0:T]) +
                                                            (total_heating_cap + total_ev_cap) * T
@@ -339,10 +340,10 @@ def raw_results_retrieval(args, model_config, m, tx_tuple_list):
     results[33] = np.around(gen_batt_capacity_results[5, 1]) # battery_power_2
     results[34] = np.around(gen_batt_capacity_results[5, 2]) # battery_power_3
     results[35] = np.around(gen_batt_capacity_results[5, 3]) # battery_power_4
-    results[36] = np.around(np.mean(timeseries_results[5, j, 0])) # battery_discharge_1
-    results[37] = np.around(np.mean(timeseries_results[5, j, 1])) # battery_discharge_2
-    results[38] = np.around(np.mean(timeseries_results[5, j, 2])) # battery_discharge_3
-    results[39] = np.around(np.mean(timeseries_results[5, j, 3])) # battery_discharge_4
+    results[36] = np.around(np.mean(timeseries_results[5, :, 0])) # battery_discharge_1
+    results[37] = np.around(np.mean(timeseries_results[5, :, 1])) # battery_discharge_2
+    results[38] = np.around(np.mean(timeseries_results[5, :, 2])) # battery_discharge_3
+    results[39] = np.around(np.mean(timeseries_results[5, :, 3])) # battery_discharge_4
 
     # H2 energy, power, average discharge
     results[40] = np.around(gen_batt_capacity_results[6, 0]) # h2_cap_1
@@ -379,7 +380,7 @@ def full_results_processing(args, results, results_ts):
 
     # Retrieve necessary model parameters
     export_columns = get_processed_columns()
-    T = args.num_years * 8760
+    T = args.num_years * 8760 + ((args.num_years + 2) // 4) * 24  ## Account for leap years starting in 2008
     tx_tuple_list = get_tx_tuples(args)
     cap_ann = annualization_rate(args.i_rate, args.annualize_years_cap)
     cap_battery = annualization_rate(args.i_rate, args.annualize_years_storage)
@@ -394,15 +395,20 @@ def full_results_processing(args, results, results_ts):
 
 
     # Create arrays to store costs -- All costs are annual
-    total_new_renew_gen_cost    = np.zeros(results.shape[0])
-    total_new_battery_cost      = np.zeros(results.shape[0])
-    total_new_gt_cost           = np.zeros(results.shape[0])
-    total_new_tx_cost           = np.zeros(results.shape[0])
-    total_gas_cost              = np.zeros(results.shape[0])
-    total_ramping_cost          = np.zeros(results.shape[0])
-    total_annual_import_cost    = np.zeros(results.shape[0])
-    total_cost_per_mwh          = np.zeros(results.shape[0])
-    total_curtailment           = np.zeros(results.shape[0])
+    total_new_wind_solar_cost           = np.zeros(results.shape[0])
+    total_new_battery_cost              = np.zeros(results.shape[0])
+    total_new_gt_cost                   = np.zeros(results.shape[0])
+    total_new_tx_cost                   = np.zeros(results.shape[0])
+    total_gas_cost                      = np.zeros(results.shape[0])
+    total_ramping_cost                  = np.zeros(results.shape[0])
+    total_annual_import_cost            = np.zeros(results.shape[0])
+    total_cost_per_mwh                  = np.zeros(results.shape[0])
+    total_renewable_curtailment         = np.zeros(results.shape[0])
+    gen_uncurtailed_windsolar_energy    = np.zeros(results.shape[0])
+    total_renewable_gen                 = np.zeros(results.shape[0])
+    peak_demand                         = np.zeros(results.shape[0])
+    total_curtailed_energy              = np.zeros(results.shape[0])
+    total_curtailment_from_slack        = np.zeros(results.shape[0])
 
     data_for_export = np.zeros((results.shape[0], len(export_columns)))
 
@@ -445,7 +451,7 @@ def full_results_processing(args, results, results_ts):
     # Calculate costs
     for i in range(results.shape[0]):
 
-        total_new_renew_gen_cost[i] = (
+        total_new_wind_solar_cost[i] = (
             results[i, 6]  * (cap_ann * float(args.onshore_cost_mw)   + float(args.onshore_fixed_om_cost_mwyr)) +
             results[i, 7]  * (cap_ann * float(args.offshore_cost_mw)  + float(args.offshore_fixed_om_cost_mwyr)) +
             results[i, 20] * (cap_ann * float(args.solar_cost_mw[0])  + float(args.solar_fixed_om_cost_mwyr)) +
@@ -489,7 +495,7 @@ def full_results_processing(args, results, results_ts):
                                         results[i, 55] * args.hq_cost_mwh[3]) * 8760
 
         total_imports = results[i, 15]
-        demand_for_rgt = avg_total_demand[i] - total_imports
+
 
         # Find portion of energy met by renewables
         if args.nuclear_boolean:  # Nuclear
@@ -497,11 +503,17 @@ def full_results_processing(args, results, results_ts):
         else:
             rgt = lct[i]
 
+        # Find Peak Demand
+        total_demand_ts = results_ts[i, :, args.num_regions * 2: args.num_regions * 3] + \
+                          results_ts[i, :, args.num_regions * 3: args.num_regions * 4] + \
+                          results_ts[i, :, args.num_regions * 4: args.num_regions * 5] # baseline + heating + evs
 
+        peak_demand[i] = np.max(np.sum(total_demand_ts, axis = 1))
 
-        wind_solar_frac = rgt - np.sum(args.hydro_gen_mw) / demand_for_rgt
+        total_curtailed_energy[i] = -np.mean(np.sum(results_ts[i, :, args.num_regions * 13: args.num_regions * 14],
+                                                    axis = 1))
 
-        gen_uncurtailed_energy = np.round(results[i, 16] * wind_uncurtailed_cf[0] +
+        gen_uncurtailed_windsolar_energy[i] = np.round(results[i, 16] * wind_uncurtailed_cf[0] +
                                           results[i, 17] * wind_uncurtailed_cf[1] +
                                           results[i, 18] * wind_uncurtailed_cf[2] +
                                           results[i, 19] * wind_uncurtailed_cf[3] +
@@ -510,11 +522,19 @@ def full_results_processing(args, results, results_ts):
                                           results[i, 22] * solar_uncurtailed_cf[2] +
                                           results[i, 23] * solar_uncurtailed_cf[3])
 
-        # Find curtailment, supplemntary costs, and total LCOE
-        total_curtailment[i] = (gen_uncurtailed_energy - (demand_for_rgt * wind_solar_frac)) / \
-                                  gen_uncurtailed_energy
 
-        total_cost_per_mwh[i] = (total_new_renew_gen_cost[i] + total_new_battery_cost[i] + total_new_gt_cost[i] +
+
+
+        demand_for_rgt                  = avg_total_demand[i] - total_imports
+        total_renewable_gen[i]          = gen_uncurtailed_windsolar_energy[i] + np.sum(args.hydro_gen_mw)
+        total_renewable_curtailment[i]  = (total_renewable_gen[i]  - (demand_for_rgt * rgt)) / total_renewable_gen[i]
+        total_curtailment_from_slack[i] = total_curtailed_energy[i] / total_renewable_gen[i]
+
+        print(total_renewable_curtailment[i])
+        print(total_curtailment_from_slack[i])
+
+
+        total_cost_per_mwh[i] = (total_new_wind_solar_cost[i] + total_new_battery_cost[i] + total_new_gt_cost[i] +
                                  total_new_tx_cost[i] + total_gas_cost[i] + total_ramping_cost[i] +
                                  total_annual_supp_cost + total_annual_hydro_cost + total_annual_import_cost[i] +
                                  total_annual_nuclear_cost) / \
@@ -547,30 +567,38 @@ def full_results_processing(args, results, results_ts):
                 # New Trans. [GW-Mi]
     data_for_export[:, 19] = results[:, 52] # Avg. Existing HQ Imports [MW]
     data_for_export[:, 20] = results[:, 54] # Avg. New HQ Imports [MW]
-    data_for_export[:, 21] = total_curtailment  # Curtailment
-    data_for_export[:, 22] = [total_new_renew_gen_cost[i] / (avg_total_demand[i] * 8760)
+
+    data_for_export[:, 21] = peak_demand # Peak load
+    data_for_export[:, 22] = gen_uncurtailed_windsolar_energy  # Average uncurtailed wind + solar generation
+    data_for_export[:, 23] = total_renewable_gen  # Average uncurtailed renewable gen
+
+
+    ## This is where I inserted
+
+    data_for_export[:, 24] = total_renewable_curtailment  # Curtailment
+    data_for_export[:, 25] = [total_new_wind_solar_cost[i] / (avg_total_demand[i] * 8760)
                               for i in range(results.shape[0])] # Renewable generation capacity cost
-    data_for_export[:, 23] = [total_new_battery_cost[i] / (avg_total_demand[i] * 8760)
+    data_for_export[:, 26] = [total_new_battery_cost[i] / (avg_total_demand[i] * 8760)
                               for i in range(results.shape[0])] # Battery capacity cost
-    data_for_export[:, 24] = [total_new_gt_cost[i] / (avg_total_demand[i] * 8760)
+    data_for_export[:, 27] = [total_new_gt_cost[i] / (avg_total_demand[i] * 8760)
                               for i in range(results.shape[0])] # New gas turbine capacity cost
-    data_for_export[:, 25] = [total_new_tx_cost[i] / (avg_total_demand[i] * 8760)
+    data_for_export[:, 28] = [total_new_tx_cost[i] / (avg_total_demand[i] * 8760)
                               for i in range(results.shape[0])] # New transmission cost
-    data_for_export[:, 26] = [total_gas_cost[i] / (avg_total_demand[i] * 8760)
+    data_for_export[:, 29] = [total_gas_cost[i] / (avg_total_demand[i] * 8760)
                               for i in range(results.shape[0])]  # Natural gas cost
-    data_for_export[:, 27] = [total_ramping_cost[i] / (avg_total_demand[i] * 8760)
+    data_for_export[:, 30] = [total_ramping_cost[i] / (avg_total_demand[i] * 8760)
                               for i in range(results.shape[0])] # Ramping cost
-    data_for_export[:, 28] = [total_annual_supp_cost / (avg_total_demand[i] * 8760)
+    data_for_export[:, 31] = [total_annual_supp_cost / (avg_total_demand[i] * 8760)
                               for i in range(results.shape[0])] # Cost of existing capacity and transmission
-    data_for_export[:, 29] = [total_annual_hydro_cost / (avg_total_demand[i] * 8760)
+    data_for_export[:, 32] = [total_annual_hydro_cost / (avg_total_demand[i] * 8760)
                               for i in range(results.shape[0])]  # Cost of existing hydro
-    data_for_export[:, 30] = [total_annual_import_cost[i] / (avg_total_demand[i] * 8760)
+    data_for_export[:, 33] = [total_annual_import_cost[i] / (avg_total_demand[i] * 8760)
                               for i in range(results.shape[0])] # Cost of imported hydro
-    data_for_export[:, 31] = [total_annual_nuclear_cost / (avg_total_demand[i] * 8760)
+    data_for_export[:, 34] = [total_annual_nuclear_cost / (avg_total_demand[i] * 8760)
                               for i in range(results.shape[0])] # Cost of nuclear
 
-    data_for_export[:, 32] = total_cost_per_mwh # Total LCOE [$/MWh]
-    data_for_export[:, 33] = results[:, 62] # GHG reductions
+    data_for_export[:, 35] = total_cost_per_mwh # Total LCOE [$/MWh]
+    data_for_export[:, 36] = results[:, 62] # GHG reductions
 
 
     results_df = pd.DataFrame(data_for_export, columns=export_columns)

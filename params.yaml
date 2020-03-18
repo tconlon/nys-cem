@@ -74,6 +74,7 @@ reserve_req: 1.17
 hqch_capacity_factor: 0.9
 new_gt_eff: 0.399
 existing_gt_eff: 0.419
+nominal_trans_cost_mwh: 0.01
 
 # Existing capacity and transmission cost assumptions
 cap_market_cost_mw_yr: [27640, 27640, 104600, 104600]  # $/MW-yr
